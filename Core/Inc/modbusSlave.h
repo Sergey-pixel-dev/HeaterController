@@ -4,6 +4,26 @@
 #include "modbus_crc.h"
 #include "stm32f4xx_hal.h"
 
+#define UART4_RX_BUF_SIZE 256
+#define UART4_TX_BUF_SIZE 256
+
+#define MODBUS_T1_5_US 750
+#define MODBUS_T3_5_US 1750
+
+typedef enum
+{
+    MODBUS_IDLE,
+    MODBUS_RECEIVING,
+    MODBUS_FRAME_COMPLETE,
+    MODBUS_WAITING_T3_5,
+    MODBUS_FRAME_ERROR
+} ModbusState_t;
+
+extern uint8_t RxBufferUART4[UART4_RX_BUF_SIZE];
+extern uint8_t TxBufferUART4[UART4_TX_BUF_SIZE];
+extern volatile uint16_t SizeRxBufUART4;
+extern volatile ModbusState_t modbus_state;
+
 #define SLAVE_ID 10
 
 #define ILLEGAL_FUNCTION 0x01

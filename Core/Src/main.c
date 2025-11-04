@@ -21,7 +21,6 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "modbusSlave.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -48,6 +47,10 @@ uint8_t TxBufferUART5[RX_BUF_CAPACITY];
 uint16_t SizeRxBuf = 0;
 uint8_t uart_event_data_ready = 0;
 uint8_t uart5_tx_dma_busy = 0;
+
+volatile ModbusState_t modbus_state = MODBUS_IDLE;
+volatile uint16_t SizeRxBufUART4 = 0;
+uint8_t RxBufferUART4[UART4_RX_BUF_SIZE];
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -65,17 +68,11 @@ void DMA_Init(void);
 
 void UART_Init(void);
 void UART5_Transmit_DMA_Blocking(uint8_t *data, uint16_t size);
-void UART5_SendData(uint8_t *data, uint16_t length)
-{
-  for (uint16_t i = 0; i < length; i++)
-  {
-    UART5->DR = data[i];
-    while (!(UART5->SR & USART_SR_TXE))
-      ;
-  }
-  while (!(UART5->SR & USART_SR_TC))
-    ;
-}
+
+void MODBUS_Timer_Init(void);
+inline void Modbus_Timer_Reset(void);
+inline void Modbus_Timer_Stop(void);
+inline void Modbus_Timer_Start(uint16_t timeout_us);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -119,6 +116,7 @@ int main(void)
   DAC->CR |= DAC_CR_EN1;
   DMA_Init();
   UART_Init();
+  MODBUS_Timer_Init();
   DMA1_Stream0->CR |= DMA_SxCR_EN;
   DMA1_Stream7->CR |= DMA_SxCR_EN;
   MeasureVref();
@@ -140,6 +138,39 @@ int main(void)
     {
       last = cur;
       usRegInputBuf[0] = (uint32_t)vdda * ADC_ReadChannel(1) / 0xFFF;
+    }
+    /* Обработка Modbus UART4 */
+    if (modbus_state == MODBUS_FRAME_COMPLETE)
+    {
+      /* Фрейм успешно принят */
+
+      /* Проверка адреса слейва */
+      if (RxBufferUART4[0] == SLAVE_ID)
+      {
+        /* Обработка команды */
+        switch (RxBufferUART4[1])
+        {
+        case 0x03:
+          /* readHoldingRegs для UART4 */
+          break;
+        case 0x04:
+          /* readInputRegs для UART4 */
+          break;
+        case 0x06:
+          /* writeSingleReg для UART4 */
+          break;
+        case 0x10:
+          /* writeHoldingRegs для UART4 */
+          break;
+        default:
+          /* modbusException(ILLEGAL_FUNCTION); */
+          break;
+        }
+      }
+
+      /* Сброс для приема нового кадра */
+      SizeRxBufUART4 = 0;
+      modbus_state = MODBUS_IDLE;
     }
     if (uart_event_data_ready)
     {
@@ -255,22 +286,49 @@ static void MX_GPIO_Init(void)
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOC_CLK_ENABLE();
+  __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
   RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN;
-  GPIOA->MODER |= GPIO_MODER_MODER0;
-  GPIOA->MODER |= GPIO_MODER_MODER1;
   GPIOA->MODER |= GPIO_MODER_MODER2;
   GPIOA->MODER |= GPIO_MODER_MODER4;
 
+  // UART5: PC12 (TX) уже настроен ранее, сохраняем
   RCC->AHB1ENR |= RCC_AHB1ENR_GPIOCEN | RCC_AHB1ENR_GPIODEN;
+  // PC12 = AF8 (UART5_TX)
+  GPIOC->MODER &= ~(GPIO_MODER_MODER12);
   GPIOC->MODER |= GPIO_MODER_MODER12_1;
+  GPIOC->AFR[1] &= ~(0xF << 16);
   GPIOC->AFR[1] |= (8 << 16);
   GPIOC->OSPEEDR |= GPIO_OSPEEDER_OSPEEDR12;
 
+  // PD2 = AF8 (UART5_RX) + Pull-Up
+  GPIOD->MODER &= ~(GPIO_MODER_MODER2);
   GPIOD->MODER |= GPIO_MODER_MODER2_1;
+  GPIOD->AFR[0] &= ~(0xF << 8);
   GPIOD->AFR[0] |= (8 << 8);
+  GPIOD->PUPDR &= ~(GPIO_PUPDR_PUPDR2);
   GPIOD->PUPDR |= GPIO_PUPDR_PUPDR2_0;
+
+  // UART4: PC10 (TX), PC11 (RX), AF8
+  // PC10 TX
+  GPIOC->MODER &= ~(GPIO_MODER_MODER10);
+  GPIOC->MODER |= GPIO_MODER_MODER10_1;      // AF
+  GPIOC->AFR[1] &= ~(0xF << 8);              // AFR[1][11:8]
+  GPIOC->AFR[1] |= (8 << 8);                 // AF8
+  GPIOC->OSPEEDR |= GPIO_OSPEEDER_OSPEEDR10; // High speed
+
+  // PC11 RX
+  GPIOC->MODER &= ~(GPIO_MODER_MODER11);
+  GPIOC->MODER |= GPIO_MODER_MODER11_1;      // AF
+  GPIOC->AFR[1] &= ~(0xF << 12);             // AFR[1][15:12]
+  GPIOC->AFR[1] |= (8 << 12);                // AF8
+  GPIOC->OSPEEDR |= GPIO_OSPEEDER_OSPEEDR11; // High speed
+  GPIOC->PUPDR &= ~(GPIO_PUPDR_PUPDR11);
+  GPIOC->PUPDR |= GPIO_PUPDR_PUPDR11_0; // Pull-Up на RX
+
+  GPIOA->MODER &= ~(GPIO_MODER_MODER0 | GPIO_MODER_MODER1);
 
   /* USER CODE END MX_GPIO_Init_2 */
 }
@@ -292,6 +350,7 @@ void ADC_Init(void)
 
 void UART_Init(void)
 {
+  // UART5
   RCC->APB1ENR |= RCC_APB1ENR_UART5EN;
   UART5->CR1 |= USART_CR1_RE | USART_CR1_TE | USART_CR1_UE | USART_CR1_IDLEIE;
   UART5->CR3 |= USART_CR3_DMAT | USART_CR3_DMAR;
@@ -299,8 +358,68 @@ void UART_Init(void)
 
   NVIC_SetPriority(UART5_IRQn, 0);
   NVIC_EnableIRQ(UART5_IRQn);
+  // UART4
+  RCC->APB1ENR |= RCC_APB1ENR_UART4EN;
+  UART4->BRR = 0x249F;
+  UART4->CR1 |= USART_CR1_UE | USART_CR1_RE | USART_CR1_TE |
+                USART_CR1_RXNEIE | USART_CR1_IDLEIE;
+  NVIC_SetPriority(UART4_IRQn, 1);
+  NVIC_EnableIRQ(UART4_IRQn);
+}
+void MODBUS_Timer_Init(void)
+{
+  RCC->APB1ENR |= RCC_APB1ENR_TIM3EN;
+  TIM3->PSC = 899;
+  TIM3->ARR = 65535;
+
+  /* Канал 1 (CCR1) - для t1.5 (750 мкс = 75 тиков по 10 мкс) */
+  TIM3->CCMR1 &= ~(TIM_CCMR1_CC1S | TIM_CCMR1_OC1M);
+  TIM3->CCMR1 |= TIM_CCMR1_OC1M_0; /* PWM mode 1 или Output Compare */
+  TIM3->CCER |= TIM_CCER_CC1E;     /* Включаем канал 1 */
+  TIM3->DIER |= TIM_DIER_CC1IE;    /* Прерывание на сравнение канала 1 */
+
+  /* Канал 2 (CCR2) - для t3.5 (1750 мкс = 175 тиков по 10 мкс) */
+  TIM3->CCMR1 &= ~(TIM_CCMR1_CC2S | TIM_CCMR1_OC2M);
+  TIM3->CCMR1 |= TIM_CCMR1_OC2M_0; /* Output Compare */
+  TIM3->CCER |= TIM_CCER_CC2E;     /* Включаем канал 2 */
+  TIM3->DIER |= TIM_DIER_CC2IE;    /* Прерывание на сравнение канала 2 */
+
+  TIM3->CR1 |= TIM_CR1_OPM;
+
+  NVIC_SetPriority(TIM3_IRQn, 2);
+  NVIC_EnableIRQ(TIM3_IRQn);
 }
 
+inline void Modbus_Timer_Start(uint16_t timeout_us)
+{
+  TIM3->ARR = timeout_us / 10;
+  TIM3->CNT = 0;
+  TIM3->SR = 0;
+  TIM3->CR1 |= TIM_CR1_CEN;
+}
+
+inline void Modbus_Timer_Stop(void)
+{
+  TIM3->CR1 &= ~TIM_CR1_CEN;
+  TIM3->CNT = 0;
+}
+
+inline void Modbus_Timer_Reset(void)
+{
+  TIM3->CNT = 0;
+}
+
+void UART4_Transmit(uint8_t *data, uint16_t size)
+{
+  for (uint16_t i = 0; i < size; i++)
+  {
+    UART4->DR = data[i];
+    while (!(UART4->SR & USART_SR_TXE))
+      ;
+  }
+  while (!(UART4->SR & USART_SR_TC))
+    ;
+}
 void UART5_Transmit_DMA_Blocking(uint8_t *data, uint16_t size)
 {
 

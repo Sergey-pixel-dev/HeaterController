@@ -19,6 +19,7 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "modbusSlave.h"
 #include "stm32f4xx_it.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -51,7 +52,7 @@
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
+volatile uint8_t modbus_t1_5_timeout = 0;
 /* USER CODE END 0 */
 
 /* External variables --------------------------------------------------------*/
@@ -215,6 +216,90 @@ void UART5_IRQHandler(void)
     }
   }
 }
+
+void UART4_IRQHandler(void)
+{
+  if (UART4->SR & USART_SR_RXNE)
+  {
+
+    uint8_t data = UART4->DR;
+    TIM3->CCR1 = (MODBUS_T1_5_US / 10);
+    TIM3->CCR2 = (MODBUS_T3_5_US / 10);
+    TIM3->CNT = 0;
+    if (modbus_state == MODBUS_FRAME_ERROR)
+    {
+      return;
+    }
+    else if (modbus_state == MODBUS_IDLE)
+    {
+      SizeRxBufUART4 = 0;
+      modbus_state = MODBUS_RECEIVING;
+      TIM3->CR1 |= TIM_CR1_CEN;
+      RxBufferUART4[SizeRxBufUART4++] = data;
+    }
+    else if (modbus_state == MODBUS_RECEIVING)
+    {
+      if (!modbus_t1_5_timeout)
+      {
+        if (SizeRxBufUART4 < UART4_RX_BUF_SIZE)
+        {
+          RxBufferUART4[SizeRxBufUART4++] = data;
+        }
+        else
+        {
+          /* Переполнение буфера */
+          modbus_state = MODBUS_FRAME_ERROR;
+          modbus_t1_5_timeout = 0;
+          SizeRxBufUART4 = 0;
+          TIM3->CR1 &= ~TIM_CR1_CEN;
+        }
+      }
+      else
+      {
+        modbus_state = MODBUS_FRAME_ERROR;
+      }
+    }
+  }
+}
+void TIM3_IRQHandler(void)
+{
+  if ((TIM3->SR & TIM_SR_CC1IF) && (TIM3->DIER & TIM_DIER_CC1IE))
+  {
+    TIM3->SR &= ~TIM_SR_CC1IF;
+    modbus_t1_5_timeout = 1;
+  }
+  if ((TIM3->SR & TIM_SR_CC2IF) && (TIM3->DIER & TIM_DIER_CC2IE))
+  {
+    TIM3->SR &= ~TIM_SR_CC2IF;
+
+    if (modbus_state == MODBUS_FRAME_ERROR)
+    {
+      modbus_state = MODBUS_IDLE;
+      SizeRxBufUART4 = 0;
+      modbus_t1_5_timeout = 0;
+      TIM3->CR1 &= ~TIM_CR1_CEN;
+    }
+    else if (modbus_state == MODBUS_RECEIVING)
+    {
+      if (SizeRxBufUART4 >= 4)
+      {
+        modbus_state = MODBUS_FRAME_COMPLETE;
+      }
+      else
+      {
+        modbus_state = MODBUS_FRAME_ERROR;
+      }
+      modbus_t1_5_timeout = 0;
+      TIM3->CR1 &= ~TIM_CR1_CEN;
+    }
+  }
+
+  /* Переполнение */
+  if (TIM3->SR & TIM_SR_UIF)
+  {
+    TIM3->SR &= ~TIM_SR_UIF;
+  }
+}
 void DMA1_Stream7_IRQHandler(void)
 {
   if (DMA1->HISR & DMA_HISR_TCIF7)
@@ -223,4 +308,5 @@ void DMA1_Stream7_IRQHandler(void)
     uart5_tx_dma_busy = 0;
   }
 }
+
 /* USER CODE END 1 */

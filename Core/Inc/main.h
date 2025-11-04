@@ -32,7 +32,7 @@ extern "C"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "modbusSlave.h"
 /* USER CODE END Includes */
 
 /* Exported types ------------------------------------------------------------*/
@@ -55,6 +55,9 @@ extern "C"
 
   /* USER CODE BEGIN EFP */
   extern void UART5_Transmit_DMA_Blocking(uint8_t *data, uint16_t size);
+  extern inline void Modbus_Timer_Start(uint16_t timeout_us);
+  extern inline void Modbus_Timer_Stop(void);
+  extern inline void Modbus_Timer_Reset(void);
   /* USER CODE END EFP */
 
   /* Private defines -----------------------------------------------------------*/
@@ -65,6 +68,10 @@ extern "C"
   extern uint16_t SizeRxBuf;
   extern uint8_t uart_event_data_ready;
   extern uint8_t uart5_tx_dma_busy;
+
+  extern volatile ModbusState_t modbus_state;
+  extern volatile uint16_t SizeRxBufUART4;
+  extern uint8_t RxBufferUART4[UART4_RX_BUF_SIZE];
   /* USER CODE END Private defines */
 
 #ifdef __cplusplus
