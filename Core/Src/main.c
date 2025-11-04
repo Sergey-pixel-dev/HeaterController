@@ -116,6 +116,7 @@ int main(void)
   ADC_Init();
   ADC1->CR2 |= ADC_CR2_ADON;
   DAC_Init();
+  DAC->CR |= DAC_CR_EN1;
   DMA_Init();
   UART_Init();
   DMA1_Stream0->CR |= DMA_SxCR_EN;
@@ -165,7 +166,6 @@ int main(void)
         case 0x10:
           writeHoldingRegs();
           DAC_SetVoltage(usRegHoldingBuf[0]);
-
           break;
         case 0x05:
           writeSingleCoil();
@@ -261,8 +261,9 @@ static void MX_GPIO_Init(void)
   GPIOA->MODER |= GPIO_MODER_MODER0;
   GPIOA->MODER |= GPIO_MODER_MODER1;
   GPIOA->MODER |= GPIO_MODER_MODER2;
-  RCC->AHB1ENR |= RCC_AHB1ENR_GPIOCEN | RCC_AHB1ENR_GPIODEN;
+  GPIOA->MODER |= GPIO_MODER_MODER4;
 
+  RCC->AHB1ENR |= RCC_AHB1ENR_GPIOCEN | RCC_AHB1ENR_GPIODEN;
   GPIOC->MODER |= GPIO_MODER_MODER12_1;
   GPIOC->AFR[1] |= (8 << 16);
   GPIOC->OSPEEDR |= GPIO_OSPEEDER_OSPEEDR12;
@@ -278,7 +279,7 @@ static void MX_GPIO_Init(void)
 void DAC_Init(void)
 {
   RCC->APB1ENR |= RCC_APB1ENR_DACEN;
-  DAC->CR |= DAC_CR_TSEL1_0 | DAC_CR_TSEL1_1 | DAC_CR_TSEL1_2 | DAC_CR_TEN1 | DAC_CR_EN1 | DAC_CR_BOFF1;
+  DAC->CR |= DAC_CR_TSEL1_2 | DAC_CR_TSEL1_1 | DAC_CR_TSEL1_0 | DAC_CR_TEN1;
 }
 
 void ADC_Init(void)
@@ -360,9 +361,7 @@ void MeasureVref(void)
 
 void DAC_SetVoltage(uint16_t voltage)
 {
-  DAC->SWTRIGR |= DAC_SWTRIGR_SWTRIG1;
-
-  DAC->DHR12R1 |= ((uint32_t)voltage * (0xFFF + 1) / vdda) & 0xFFF; // 12 бит должно быть
+  DAC->DHR12R1 = ((uint32_t)voltage * (0xFFF + 1) / vdda) & 0xFFF; // 12 бит должно быть
   DAC->SWTRIGR |= DAC_SWTRIGR_SWTRIG1;
 }
 
