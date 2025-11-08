@@ -19,7 +19,6 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "modbusSlave.h"
 #include "stm32f4xx_it.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -206,10 +205,10 @@ void UART5_IRQHandler(void)
   {
     UART5->DR;
     UART5->SR;
-    SizeRxBuf = RX_BUF_CAPACITY - DMA1_Stream0->NDTR;
+    SizeRxBuf = UART5_RX_BUF_SIZE - DMA1_Stream0->NDTR;
     if (SizeRxBuf > 0)
     {
-      uart_event_data_ready = 1;
+      uart5_event_data_ready = 1;
       DMA1_Stream0->CR &= ~DMA_SxCR_EN;
       while (DMA1_Stream0->CR & DMA_SxCR_EN)
         ;
@@ -221,10 +220,8 @@ void UART4_IRQHandler(void)
 {
   if (UART4->SR & USART_SR_RXNE)
   {
-
     uint8_t data = UART4->DR;
-    TIM3->CCR1 = (MODBUS_T1_5_US / 10);
-    TIM3->CCR2 = (MODBUS_T3_5_US / 10);
+    UART4->SR;
     TIM3->CNT = 0;
     if (modbus_state == MODBUS_FRAME_ERROR)
     {
@@ -232,32 +229,21 @@ void UART4_IRQHandler(void)
     }
     else if (modbus_state == MODBUS_IDLE)
     {
-      SizeRxBufUART4 = 0;
       modbus_state = MODBUS_RECEIVING;
-      TIM3->CR1 |= TIM_CR1_CEN;
       RxBufferUART4[SizeRxBufUART4++] = data;
+      TIM3->CR1 |= TIM_CR1_CEN;
     }
     else if (modbus_state == MODBUS_RECEIVING)
     {
       if (!modbus_t1_5_timeout)
       {
         if (SizeRxBufUART4 < UART4_RX_BUF_SIZE)
-        {
           RxBufferUART4[SizeRxBufUART4++] = data;
-        }
         else
-        {
-          /* Переполнение буфера */
           modbus_state = MODBUS_FRAME_ERROR;
-          modbus_t1_5_timeout = 0;
-          SizeRxBufUART4 = 0;
-          TIM3->CR1 &= ~TIM_CR1_CEN;
-        }
       }
       else
-      {
         modbus_state = MODBUS_FRAME_ERROR;
-      }
     }
   }
 }
@@ -275,37 +261,42 @@ void TIM3_IRQHandler(void)
     if (modbus_state == MODBUS_FRAME_ERROR)
     {
       modbus_state = MODBUS_IDLE;
+      uart4_event_data_ready = 1;
       SizeRxBufUART4 = 0;
-      modbus_t1_5_timeout = 0;
-      TIM3->CR1 &= ~TIM_CR1_CEN;
     }
     else if (modbus_state == MODBUS_RECEIVING)
     {
       if (SizeRxBufUART4 >= 4)
       {
+        uart4_event_data_ready = 1;
         modbus_state = MODBUS_FRAME_COMPLETE;
       }
       else
       {
-        modbus_state = MODBUS_FRAME_ERROR;
+        SizeRxBufUART4 = 0;
+        uart4_event_data_ready = 0;
+        modbus_state = MODBUS_IDLE;
       }
-      modbus_t1_5_timeout = 0;
-      TIM3->CR1 &= ~TIM_CR1_CEN;
     }
-  }
-
-  /* Переполнение */
-  if (TIM3->SR & TIM_SR_UIF)
-  {
-    TIM3->SR &= ~TIM_SR_UIF;
+    modbus_t1_5_timeout = 0;
   }
 }
+// В дальнейшем попробовать отказаться от флага dma_busy и использовать статусные регистры DMA
 void DMA1_Stream7_IRQHandler(void)
 {
   if (DMA1->HISR & DMA_HISR_TCIF7)
   {
     DMA1->HIFCR |= DMA_HIFCR_CTCIF7;
     uart5_tx_dma_busy = 0;
+  }
+}
+
+void DMA1_Stream4_IRQHandler(void)
+{
+  if (DMA1->HISR & DMA_HISR_TCIF4)
+  {
+    DMA1->HIFCR |= DMA_HIFCR_CTCIF4;
+    uart4_tx_dma_busy = 0;
   }
 }
 

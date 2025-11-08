@@ -18,6 +18,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "modbusSlave.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -42,15 +43,19 @@
 
 /* USER CODE BEGIN PV */
 uint16_t vdda;
-uint8_t RxBufferUART5[RX_BUF_CAPACITY];
-uint8_t TxBufferUART5[RX_BUF_CAPACITY];
+uint8_t RxBufferUART5[UART5_TX_BUF_SIZE];
+uint8_t TxBufferUART5[UART5_TX_BUF_SIZE];
 uint16_t SizeRxBuf = 0;
-uint8_t uart_event_data_ready = 0;
+uint8_t uart5_event_data_ready = 0;
+uint8_t uart4_event_data_ready = 0;
 uint8_t uart5_tx_dma_busy = 0;
+uint8_t uart4_tx_dma_busy = 0;
 
 volatile ModbusState_t modbus_state = MODBUS_IDLE;
 volatile uint16_t SizeRxBufUART4 = 0;
 uint8_t RxBufferUART4[UART4_RX_BUF_SIZE];
+uint8_t TxBufferUART4[UART4_TX_BUF_SIZE];
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -68,11 +73,9 @@ void DMA_Init(void);
 
 void UART_Init(void);
 void UART5_Transmit_DMA_Blocking(uint8_t *data, uint16_t size);
-
+void UART4_Transmit_DMA_Blocking(uint8_t *data, uint16_t size);
 void MODBUS_Timer_Init(void);
-inline void Modbus_Timer_Reset(void);
-inline void Modbus_Timer_Stop(void);
-inline void Modbus_Timer_Start(uint16_t timeout_us);
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -118,7 +121,6 @@ int main(void)
   UART_Init();
   MODBUS_Timer_Init();
   DMA1_Stream0->CR |= DMA_SxCR_EN;
-  DMA1_Stream7->CR |= DMA_SxCR_EN;
   MeasureVref();
   DAC_SetVoltage(400);
   uint32_t last = HAL_GetTick();
@@ -139,44 +141,56 @@ int main(void)
       last = cur;
       usRegInputBuf[0] = (uint32_t)vdda * ADC_ReadChannel(1) / 0xFFF;
     }
-    /* Обработка Modbus UART4 */
-    if (modbus_state == MODBUS_FRAME_COMPLETE)
+    if (uart4_event_data_ready && modbus_state == MODBUS_FRAME_COMPLETE)
     {
-      /* Фрейм успешно принят */
-
-      /* Проверка адреса слейва */
+      TransmitFuncPtr = &UART4_Transmit_DMA_Blocking;
+      RxBuffer = RxBufferUART4;
+      TxBuffer = TxBufferUART4;
       if (RxBufferUART4[0] == SLAVE_ID)
       {
-        /* Обработка команды */
         switch (RxBufferUART4[1])
         {
         case 0x03:
-          /* readHoldingRegs для UART4 */
+          readHoldingRegs();
           break;
         case 0x04:
-          /* readInputRegs для UART4 */
+          readInputRegs();
+          break;
+        case 0x01:
+          readCoils();
+          break;
+        case 0x02:
+          readInputs();
           break;
         case 0x06:
-          /* writeSingleReg для UART4 */
+          writeSingleReg();
           break;
         case 0x10:
-          /* writeHoldingRegs для UART4 */
+          writeHoldingRegs();
+          break;
+        case 0x05:
+          writeSingleCoil();
+          break;
+        case 0x0F:
+          writeMultiCoils();
           break;
         default:
-          /* modbusException(ILLEGAL_FUNCTION); */
+          modbusException(ILLEGAL_FUNCTION);
           break;
         }
       }
-
-      /* Сброс для приема нового кадра */
       SizeRxBufUART4 = 0;
+      uart4_event_data_ready = 0;
       modbus_state = MODBUS_IDLE;
     }
-    if (uart_event_data_ready)
+    if (uart5_event_data_ready)
     {
-      uart_event_data_ready = 0;
+      uart5_event_data_ready = 0;
       if (RxBufferUART5[0] == SLAVE_ID)
       {
+        TransmitFuncPtr = &UART5_Transmit_DMA_Blocking;
+        RxBuffer = RxBufferUART5;
+        TxBuffer = TxBufferUART5;
         switch (RxBufferUART5[1])
         {
         case 0x03:
@@ -209,7 +223,7 @@ int main(void)
           break;
         }
       }
-      DMA1_Stream0->NDTR = RX_BUF_CAPACITY;
+      DMA1_Stream0->NDTR = UART5_RX_BUF_SIZE;
       DMA1->LIFCR |= DMA_LIFCR_CTCIF0;
       DMA1_Stream0->CR |= DMA_SxCR_EN;
       while (!(DMA1_Stream0->CR & DMA_SxCR_EN))
@@ -286,8 +300,6 @@ static void MX_GPIO_Init(void)
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
-  __HAL_RCC_GPIOC_CLK_ENABLE();
-  __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
   RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN;
@@ -334,10 +346,43 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+void DMA_Init(void)
+{
+  RCC->AHB1ENR |= RCC_AHB1ENR_DMA1EN;
+
+  // UART5 TX
+  DMA1_Stream7->CR |= DMA_SxCR_CHSEL_2 | DMA_SxCR_PL_1 | DMA_SxCR_MINC | DMA_SxCR_DIR_0 | DMA_SxCR_TCIE;
+  DMA1_Stream7->PAR = (uint32_t)&UART5->DR;
+  DMA1_Stream7->FCR = 0;
+  // UART5 RX
+  DMA1_Stream0->CR |= DMA_SxCR_CHSEL_2 | DMA_SxCR_PL_1 | DMA_SxCR_MINC;
+  DMA1_Stream0->PAR = (uint32_t)&UART5->DR;
+  DMA1_Stream0->M0AR = (uint32_t)&RxBufferUART5;
+  DMA1_Stream0->NDTR = UART5_RX_BUF_SIZE;
+  DMA1_Stream0->FCR = 0;
+
+  // UART4 TX
+  DMA1_Stream4->CR |= DMA_SxCR_CHSEL_2 | DMA_SxCR_PL_1 | DMA_SxCR_PL_0 | DMA_SxCR_MINC | DMA_SxCR_DIR_0 | DMA_SxCR_TCIE;
+  DMA1_Stream4->PAR = (uint32_t)&UART4->DR;
+  DMA1_Stream4->FCR = 0;
+
+  NVIC_SetPriority(DMA1_Stream0_IRQn, 1);
+  NVIC_EnableIRQ(DMA1_Stream0_IRQn);
+  NVIC_SetPriority(DMA1_Stream7_IRQn, 1);
+  NVIC_EnableIRQ(DMA1_Stream7_IRQn);
+  NVIC_SetPriority(DMA1_Stream4_IRQn, 0);
+  NVIC_EnableIRQ(DMA1_Stream4_IRQn);
+}
+
 void DAC_Init(void)
 {
   RCC->APB1ENR |= RCC_APB1ENR_DACEN;
   DAC->CR |= DAC_CR_TSEL1_2 | DAC_CR_TSEL1_1 | DAC_CR_TSEL1_0 | DAC_CR_TEN1;
+}
+void DAC_SetVoltage(uint16_t voltage)
+{
+  DAC->DHR12R1 = ((uint32_t)voltage * (0xFFF + 1) / vdda) & 0xFFF; // 12 бит должно быть
+  DAC->SWTRIGR |= DAC_SWTRIGR_SWTRIG1;
 }
 
 void ADC_Init(void)
@@ -346,6 +391,24 @@ void ADC_Init(void)
   ADC->CCR |= 1 << 16; // prescaler = 4
   ADC->CCR |= ADC_CCR_TSVREFE;
   ADC1->CR2 |= ADC_CR2_EOCS;
+}
+uint16_t ADC_ReadChannel(uint8_t channel)
+{
+  ADC1->SQR3 = channel;
+  ADC1->CR2 |= ADC_CR2_SWSTART;
+  while (!(ADC1->SR & ADC_SR_EOC))
+    ;
+  uint16_t a = ADC1->DR;
+  ADC1->SR = 0;
+  return a;
+}
+void MeasureVref(void)
+{
+  ADC1->DR;
+  ADC1->SR = 0;
+  uint16_t raw_vrefint = ADC_ReadChannel(17);
+  vdda = (3300 * *(uint16_t *)VREFINT_CAL_ADDR) / raw_vrefint;
+  ADC1->SR = 0;
 }
 
 void UART_Init(void)
@@ -356,59 +419,37 @@ void UART_Init(void)
   UART5->CR3 |= USART_CR3_DMAT | USART_CR3_DMAR;
   UART5->BRR = 0x187; // 115200, 45Мгц
 
-  NVIC_SetPriority(UART5_IRQn, 0);
+  NVIC_SetPriority(UART5_IRQn, 1);
   NVIC_EnableIRQ(UART5_IRQn);
   // UART4
   RCC->APB1ENR |= RCC_APB1ENR_UART4EN;
-  UART4->BRR = 0x249F;
+  UART4->BRR = 0x187;
   UART4->CR1 |= USART_CR1_UE | USART_CR1_RE | USART_CR1_TE |
-                USART_CR1_RXNEIE | USART_CR1_IDLEIE;
-  NVIC_SetPriority(UART4_IRQn, 1);
+                USART_CR1_RXNEIE;
+  UART4->CR3 |= USART_CR3_DMAT;
+  NVIC_SetPriority(UART4_IRQn, 0);
   NVIC_EnableIRQ(UART4_IRQn);
 }
 void MODBUS_Timer_Init(void)
 {
   RCC->APB1ENR |= RCC_APB1ENR_TIM3EN;
+  TIM3->CNT = 1;
   TIM3->PSC = 899;
   TIM3->ARR = 65535;
 
-  /* Канал 1 (CCR1) - для t1.5 (750 мкс = 75 тиков по 10 мкс) */
-  TIM3->CCMR1 &= ~(TIM_CCMR1_CC1S | TIM_CCMR1_OC1M);
-  TIM3->CCMR1 |= TIM_CCMR1_OC1M_0; /* PWM mode 1 или Output Compare */
-  TIM3->CCER |= TIM_CCER_CC1E;     /* Включаем канал 1 */
-  TIM3->DIER |= TIM_DIER_CC1IE;    /* Прерывание на сравнение канала 1 */
+  TIM3->CCR1 = (MODBUS_T1_5_US / 10);
+  TIM3->CCR2 = (MODBUS_T3_5_US / 10);
+  TIM3->CCER |= TIM_CCER_CC1E | TIM_CCER_CC2E;
+  TIM3->DIER |= TIM_DIER_CC1IE | TIM_DIER_CC2IE;
 
-  /* Канал 2 (CCR2) - для t3.5 (1750 мкс = 175 тиков по 10 мкс) */
-  TIM3->CCMR1 &= ~(TIM_CCMR1_CC2S | TIM_CCMR1_OC2M);
-  TIM3->CCMR1 |= TIM_CCMR1_OC2M_0; /* Output Compare */
-  TIM3->CCER |= TIM_CCER_CC2E;     /* Включаем канал 2 */
-  TIM3->DIER |= TIM_DIER_CC2IE;    /* Прерывание на сравнение канала 2 */
+  TIM3->CCMR1 |= TIM_CCMR1_OC1M_1 | TIM_CCMR1_OC1M_0;
+  TIM3->CCMR1 |= TIM_CCMR1_OC2M_1 | TIM_CCMR1_OC2M_0;
 
   TIM3->CR1 |= TIM_CR1_OPM;
-
+  TIM3->EGR |= TIM_EGR_UG;
   NVIC_SetPriority(TIM3_IRQn, 2);
   NVIC_EnableIRQ(TIM3_IRQn);
 }
-
-inline void Modbus_Timer_Start(uint16_t timeout_us)
-{
-  TIM3->ARR = timeout_us / 10;
-  TIM3->CNT = 0;
-  TIM3->SR = 0;
-  TIM3->CR1 |= TIM_CR1_CEN;
-}
-
-inline void Modbus_Timer_Stop(void)
-{
-  TIM3->CR1 &= ~TIM_CR1_CEN;
-  TIM3->CNT = 0;
-}
-
-inline void Modbus_Timer_Reset(void)
-{
-  TIM3->CNT = 0;
-}
-
 void UART4_Transmit(uint8_t *data, uint16_t size)
 {
   for (uint16_t i = 0; i < size; i++)
@@ -430,58 +471,27 @@ void UART5_Transmit_DMA_Blocking(uint8_t *data, uint16_t size)
     ;
   DMA1_Stream7->M0AR = (uint32_t)data;
   DMA1_Stream7->NDTR = size;
-  uart5_tx_dma_busy = 1;
   DMA1->HIFCR |= DMA_HIFCR_CTCIF7;
+  uart5_tx_dma_busy = 1;
   DMA1_Stream7->CR |= DMA_SxCR_EN;
   while (!(DMA1_Stream7->CR & DMA_SxCR_EN))
     ;
 }
-
-void DMA_Init(void)
+void UART4_Transmit_DMA_Blocking(uint8_t *data, uint16_t size)
 {
-  RCC->AHB1ENR |= RCC_AHB1ENR_DMA1EN;
 
-  // UART5 TX
-  DMA1_Stream7->CR |= DMA_SxCR_CHSEL_2 | DMA_SxCR_PL_1 | DMA_SxCR_MINC | DMA_SxCR_DIR_0 | DMA_SxCR_TCIE;
-  DMA1_Stream7->PAR = (uint32_t)&UART5->DR;
-  DMA1_Stream7->FCR = 0;
-  // UART5 RX
-  DMA1_Stream0->CR |= DMA_SxCR_CHSEL_2 | DMA_SxCR_PL_1 | DMA_SxCR_MINC;
-  DMA1_Stream0->PAR = (uint32_t)&UART5->DR;
-  DMA1_Stream0->M0AR = (uint32_t)&RxBufferUART5;
-  DMA1_Stream0->NDTR = RX_BUF_CAPACITY;
-  DMA1_Stream0->FCR = 0;
-
-  NVIC_SetPriority(DMA1_Stream0_IRQn, 0);
-  NVIC_EnableIRQ(DMA1_Stream0_IRQn);
-  NVIC_SetPriority(DMA1_Stream7_IRQn, 0);
-  NVIC_EnableIRQ(DMA1_Stream7_IRQn);
-}
-
-uint16_t ADC_ReadChannel(uint8_t channel)
-{
-  ADC1->SQR3 = channel;
-  ADC1->CR2 |= ADC_CR2_SWSTART;
-  while (!(ADC1->SR & ADC_SR_EOC))
+  while (uart4_tx_dma_busy)
     ;
-  uint16_t a = ADC1->DR;
-  ADC1->SR = 0;
-  return a;
-}
-
-void MeasureVref(void)
-{
-  ADC1->DR;
-  ADC1->SR = 0;
-  uint16_t raw_vrefint = ADC_ReadChannel(17);
-  vdda = (3300 * *(uint16_t *)VREFINT_CAL_ADDR) / raw_vrefint;
-  ADC1->SR = 0;
-}
-
-void DAC_SetVoltage(uint16_t voltage)
-{
-  DAC->DHR12R1 = ((uint32_t)voltage * (0xFFF + 1) / vdda) & 0xFFF; // 12 бит должно быть
-  DAC->SWTRIGR |= DAC_SWTRIGR_SWTRIG1;
+  DMA1_Stream4->CR &= ~DMA_SxCR_EN;
+  while (DMA1_Stream4->CR & DMA_SxCR_EN)
+    ;
+  DMA1_Stream4->M0AR = (uint32_t)data;
+  DMA1_Stream4->NDTR = size;
+  DMA1->HIFCR |= DMA_HIFCR_CTCIF4;
+  uart4_tx_dma_busy = 1;
+  DMA1_Stream4->CR |= DMA_SxCR_EN;
+  while (!(DMA1_Stream4->CR & DMA_SxCR_EN))
+    ;
 }
 
 /* USER CODE END 4 */

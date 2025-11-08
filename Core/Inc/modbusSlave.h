@@ -19,8 +19,9 @@ typedef enum
     MODBUS_FRAME_ERROR
 } ModbusState_t;
 
-extern uint8_t RxBufferUART4[UART4_RX_BUF_SIZE];
-extern uint8_t TxBufferUART4[UART4_TX_BUF_SIZE];
+extern uint8_t *RxBuffer;
+extern uint8_t *TxBuffer;
+extern void (*TransmitFuncPtr)(uint8_t *data, uint16_t size);
 extern volatile uint16_t SizeRxBufUART4;
 extern volatile ModbusState_t modbus_state;
 
