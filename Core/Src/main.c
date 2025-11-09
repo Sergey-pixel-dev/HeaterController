@@ -56,6 +56,13 @@ volatile uint16_t SizeRxBufUART4 = 0;
 uint8_t RxBufferUART4[UART4_RX_BUF_SIZE];
 uint8_t TxBufferUART4[UART4_TX_BUF_SIZE];
 
+uint16_t c_a[N_SEGMENTS];
+uint16_t c_b[N_SEGMENTS];
+uint16_t c_c[N_SEGMENTS];
+uint16_t c_d;
+uint16_t i_e;
+uint16_t c_index = 0;
+uint16_t delta_u;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -75,6 +82,14 @@ void UART_Init(void);
 void UART5_Transmit_DMA_Blocking(uint8_t *data, uint16_t size);
 void UART4_Transmit_DMA_Blocking(uint8_t *data, uint16_t size);
 void MODBUS_Timer_Init(void);
+
+void Calibration(void);
+void Set_I(uint16_t i);
+void Change_I(void);
+
+void TIM6_Init(void);
+uint16_t Get_c_a_by_I(uint16_t i);
+uint16_t Get_c_b_by_U_mes(uint16_t u);
 
 /* USER CODE END PFP */
 
@@ -120,11 +135,12 @@ int main(void)
   DMA_Init();
   UART_Init();
   MODBUS_Timer_Init();
+  TIM6_Init();
   DMA1_Stream0->CR |= DMA_SxCR_EN;
   MeasureVref();
   DAC_SetVoltage(400);
-  uint32_t last = HAL_GetTick();
-  uint32_t cur = last;
+  uint16_t last_i_set;
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -135,12 +151,7 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    cur = HAL_GetTick();
-    if (cur - last > 1000)
-    {
-      last = cur;
-      usRegInputBuf[0] = (uint32_t)vdda * ADC_ReadChannel(1) / 0xFFF;
-    }
+
     if (uart4_event_data_ready && modbus_state == MODBUS_FRAME_COMPLETE)
     {
       TransmitFuncPtr = &UART4_Transmit_DMA_Blocking;
@@ -206,11 +217,21 @@ int main(void)
           readInputs();
           break;
         case 0x06:
+          last_i_set = usRegHoldingBuf[0];
           writeSingleReg();
+          if (last_i_set != usRegHoldingBuf[0])
+          {
+            TIM6->CR1 |= TIM_CR1_CEN;
+          }
+
           break;
         case 0x10:
+          last_i_set = usRegHoldingBuf[0];
           writeHoldingRegs();
-          DAC_SetVoltage(usRegHoldingBuf[0]);
+          if (last_i_set != usRegHoldingBuf[0])
+          {
+            TIM6->CR1 |= TIM_CR1_CEN;
+          }
           break;
         case 0x05:
           writeSingleCoil();
@@ -306,7 +327,7 @@ static void MX_GPIO_Init(void)
   GPIOA->MODER |= GPIO_MODER_MODER2;
   GPIOA->MODER |= GPIO_MODER_MODER4;
 
-  // UART5: PC12 (TX) уже настроен ранее, сохраняем
+  // UART5: PC12 (TX)
   RCC->AHB1ENR |= RCC_AHB1ENR_GPIOCEN | RCC_AHB1ENR_GPIODEN;
   // PC12 = AF8 (UART5_TX)
   GPIOC->MODER &= ~(GPIO_MODER_MODER12);
@@ -342,6 +363,22 @@ static void MX_GPIO_Init(void)
 
   GPIOA->MODER &= ~(GPIO_MODER_MODER0 | GPIO_MODER_MODER1);
 
+  RCC->AHB1ENR |= RCC_AHB1ENR_GPIOBEN;
+  RCC->APB2ENR |= RCC_APB2ENR_SYSCFGEN; // EXTI
+
+  GPIOB->MODER &= ~(GPIO_MODER_MODER12);
+  GPIOB->PUPDR &= ~(GPIO_PUPDR_PUPDR12);
+  GPIOB->PUPDR |= (GPIO_PUPDR_PUPDR12_0);
+  SYSCFG->EXTICR[3] &= ~(SYSCFG_EXTICR4_EXTI12);
+  SYSCFG->EXTICR[3] |= SYSCFG_EXTICR4_EXTI12_PB;
+  EXTI->IMR |= EXTI_IMR_MR12;
+  EXTI->FTSR |= EXTI_FTSR_TR12;
+  EXTI->RTSR &= ~(EXTI_RTSR_TR12);
+  NVIC_SetPriority(EXTI15_10_IRQn, 3);
+  NVIC_EnableIRQ(EXTI15_10_IRQn);
+  GPIOB->MODER &= ~(GPIO_MODER_MODER13);
+  GPIOB->PUPDR &= ~(GPIO_PUPDR_PUPDR13);
+  GPIOB->PUPDR |= (GPIO_PUPDR_PUPDR13_0);
   /* USER CODE END MX_GPIO_Init_2 */
 }
 
@@ -447,8 +484,24 @@ void MODBUS_Timer_Init(void)
 
   TIM3->CR1 |= TIM_CR1_OPM;
   TIM3->EGR |= TIM_EGR_UG;
+  TIM3->SR &= ~TIM_SR_UIF;
   NVIC_SetPriority(TIM3_IRQn, 2);
   NVIC_EnableIRQ(TIM3_IRQn);
+}
+void TIM6_Init(void)
+{
+  RCC->APB1ENR |= RCC_APB1ENR_TIM6EN;
+  TIM6->PSC = 8999;
+  TIM6->ARR = 1000;
+  TIM6->CNT = 0;
+  TIM6->CR1 &= ~TIM_CR1_UDIS;
+  TIM6->CR1 |= TIM_CR1_URS;
+  TIM6->CR1 &= ~TIM_CR1_OPM;
+  TIM6->EGR |= TIM_EGR_UG;
+  TIM6->SR &= ~TIM_SR_UIF;
+  TIM6->DIER |= TIM_DIER_UIE;
+  NVIC_SetPriority(TIM6_DAC_IRQn, 2);
+  NVIC_EnableIRQ(TIM6_DAC_IRQn);
 }
 void UART4_Transmit(uint8_t *data, uint16_t size)
 {
@@ -494,6 +547,77 @@ void UART4_Transmit_DMA_Blocking(uint8_t *data, uint16_t size)
     ;
 }
 
+void Calibration(void)
+{
+  if (usDiscreteBuf[0] & 0x0001 && usCoilsBuf[0] & 0x0001 && c_index < N_SEGMENTS)
+  {
+    uint16_t u_mes = ADC_ReadChannel(1);
+    uint16_t segment = (MIN_U + c_index * (MAX_U - MIN_U));
+    c_a[c_index] = ((usRegHoldingBuf[3] / segment) << 12);
+    c_a[c_index] |= (usRegHoldingBuf[3] % segment) * 1000 / segment;
+    c_b[c_index] = ((usRegHoldingBuf[3] / u_mes) << 12);
+    c_b[c_index] |= (usRegHoldingBuf[3] % u_mes) * 1000 / segment;
+    c_index++;
+    usRegHoldingBuf[0] = MIN_I + c_index * (MAX_I - MIN_I) / N_SEGMENTS;
+    Set_I(usRegHoldingBuf[0]);
+  }
+  else
+  {
+    c_index = 0;
+    usCoilsBuf[0] &= ~0x0001;
+    SYSCFG->EXTICR[3] &= ~SYSCFG_EXTICR4_EXTI12_PB;
+    usRegHoldingBuf[3] = 0;
+    Set_I(usRegHoldingBuf[2]);
+  }
+}
+void Set_I(uint16_t i)
+{
+  i_set_cur = i;
+  usDiscreteBuf[0] |= 0x02;
+  TIM6->CR1 |= TIM_CR1_CEN;
+}
+void Change_I(void)
+{
+  uint16_t U_mes = ADC_ReadChannel(1);
+  uint16_t I_cur = U_mes * Get_c_b_by_U_mes(U_mes);
+  uint16_t delta;
+  uint16_t I_sp = usRegHoldingBuf[1];
+  uint16_t c_a_I_cur = Get_c_a_by_I(I_cur);
+  uint16_t c_a_I_cur_sp = Get_c_a_by_I(I_cur + I_sp);
+  uint16_t U_delta = 3 * usRegHoldingBuf[1] / 4;
+  U_delta = U_delta / (c_a_I_cur >> 12) + (U_delta * 1000) / (c_a_I_cur & 0x0FFF);
+  if (I_cur > usRegHoldingBuf[1])
+    delta = I_cur - usRegHoldingBuf[1];
+  else
+    delta = usRegHoldingBuf[1] - I_cur;
+  if (delta < usRegHoldingBuf[4])
+  {
+    TIM6->CR1 &= ~TIM_CR1_CEN;
+    return;
+  }
+  else if (I_cur > usRegHoldingBuf[1])
+  {
+    DAC_SetVoltage(usRegInputBuf[1] - U_delta);
+  }
+  else
+  {
+    DAC_SetVoltage(usRegInputBuf[1] + U_delta);
+  }
+
+  uint32_t numerator = (I_cur + I_sp) * (c_a_I_cur >> 12) + (I_cur + I_sp) * (c_a_I_cur & 0x0FFF) / 1000;
+  numerator -= I_cur * (c_a_I_cur_sp >> 12) + I_cur * (c_a_I_cur_sp & 0x0FFF) / 1000;
+  uint32_t denominator = (c_a_I_cur_sp >> 12) * (c_a_I_cur >> 12) + ((uint32_t)(c_a_I_cur_sp & 0x0FFF) * (c_a_I_cur_sp & 0x0FFF)) / 1000000;
+  uint8_t N = numerator / denominator / U_delta;
+  TIM6->ARR = 1000 / N;
+}
+uint16_t Get_c_a_by_I(uint16_t i)
+{
+  return 10 << 12;
+}
+uint16_t Get_c_b_by_U_mes(uint16_t u)
+{
+  return 10 << 12;
+}
 /* USER CODE END 4 */
 
 /**

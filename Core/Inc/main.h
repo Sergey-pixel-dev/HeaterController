@@ -51,6 +51,13 @@ extern "C"
 #define UART5_RX_BUF_SIZE 256
 #define UART5_TX_BUF_SIZE 256
 
+#define N_SEGMENTS 10 // кол-во коэф (частей, на которые мы делим ось U графика I(U))
+#define MIN_I 0
+#define MAX_I 30000 // в мА
+#define MIN_U 0
+#define MAX_U 3000
+
+#define N_INTERVALS_1_SEC 10 // кол-во интервалов в 1 сек
   /* USER CODE END EM */
 
   /* Exported functions prototypes ---------------------------------------------*/
@@ -58,6 +65,8 @@ extern "C"
 
   /* USER CODE BEGIN EFP */
   extern void UART5_Transmit_DMA_Blocking(uint8_t *data, uint16_t size);
+  extern void Calibration(void);
+  extern void Change_I(void);
   /* USER CODE END EFP */
 
   /* Private defines -----------------------------------------------------------*/
@@ -75,6 +84,17 @@ extern "C"
   extern volatile uint16_t SizeRxBufUART4;
   extern uint8_t RxBufferUART4[UART4_RX_BUF_SIZE];
   extern uint8_t TxBufferUART4[UART4_TX_BUF_SIZE];
+
+  extern uint16_t c_a[N_SEGMENTS];
+  extern uint16_t c_b[N_SEGMENTS];
+  extern uint16_t c_c[N_SEGMENTS];
+  extern uint16_t c_d;
+  extern uint16_t i_e;
+  extern uint16_t c_index;
+  extern uint16_t delta_u;
+
+  extern uint16_t i_set_cur;
+
   /* USER CODE END Private defines */
 
 #ifdef __cplusplus

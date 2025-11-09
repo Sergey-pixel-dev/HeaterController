@@ -35,10 +35,10 @@ extern volatile ModbusState_t modbus_state;
 #define REG_HOLDING_START 41001
 #define COILS_START 00001
 #define DISCRETE_START 10001
-#define COILS_N 2
-#define DISCRETE_N 6
-#define REG_INPUT_NREGS 9
-#define REG_HOLDING_NREGS 6
+#define COILS_N 4
+#define DISCRETE_N 2
+#define REG_INPUT_NREGS 22
+#define REG_HOLDING_NREGS 5
 
 extern uint16_t usRegInputBuf[REG_INPUT_NREGS];
 extern uint16_t usRegHoldingBuf[REG_HOLDING_NREGS];

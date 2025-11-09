@@ -281,7 +281,25 @@ void TIM3_IRQHandler(void)
     modbus_t1_5_timeout = 0;
   }
 }
-// В дальнейшем попробовать отказаться от флага dma_busy и использовать статусные регистры DMA
+void EXTI15_10_IRQHandler(void)
+{
+  if (EXTI->PR & EXTI_PR_PR12)
+  {
+    EXTI->PR |= EXTI_PR_PR12;
+    Calibration();
+  }
+}
+
+void TIM6_DAC_IRQHandler(void)
+{
+  if (TIM6->SR & TIM_SR_UIF)
+  {
+    TIM6->SR &= ~TIM_SR_UIF;
+    Change_I();
+  }
+}
+
+// В дальнейшем попробовать отказаться от флага dma_busy в пользу статусныъ регистров DMA
 void DMA1_Stream7_IRQHandler(void)
 {
   if (DMA1->HISR & DMA_HISR_TCIF7)
