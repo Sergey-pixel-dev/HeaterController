@@ -10,8 +10,7 @@
 #define MODBUS_T1_5_US 750
 #define MODBUS_T3_5_US 1750
 
-typedef enum
-{
+typedef enum {
     MODBUS_IDLE,
     MODBUS_RECEIVING,
     MODBUS_FRAME_COMPLETE,
@@ -31,14 +30,14 @@ extern volatile ModbusState_t modbus_state;
 #define ILLEGAL_DATA_ADDRESS 0x02
 #define ILLEGAL_DATA_VALUE 0x03
 
-#define REG_INPUT_START 31001
-#define REG_HOLDING_START 41001
-#define COILS_START 00001
-#define DISCRETE_START 10001
-#define COILS_N 4
-#define DISCRETE_N 2
+#define REG_INPUT_START 31000
+#define REG_HOLDING_START 41000
+#define COILS_START 00000
+#define DISCRETE_START 10000
+#define COILS_N 16
+#define DISCRETE_N 16
 #define REG_INPUT_NREGS 22
-#define REG_HOLDING_NREGS 5
+#define REG_HOLDING_NREGS 22
 
 extern uint16_t usRegInputBuf[REG_INPUT_NREGS];
 extern uint16_t usRegHoldingBuf[REG_HOLDING_NREGS];
@@ -56,5 +55,11 @@ uint8_t writeSingleCoil(void);
 uint8_t writeMultiCoils(void);
 
 void modbusException(uint8_t exceptioncode);
+
+// Экспортированные функции управления режимами
+extern void SetOperatingMode(void);
+extern void SetStandbyMode(void);
+extern void SetCalibrationMode(void);
+extern void Coils_ApplyToPins(void);
 
 #endif /* INC_MODBUSSLAVE_H_ */

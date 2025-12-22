@@ -1,0 +1,8 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/svs/LIM/HeaterController/STM32F446/cmake_install.cmake",
+		"/home/svs/LIM/HeaterController/STM32F446/cmake/stm32cubemx/cmake_install.cmake"
+	],
+	"Parallel" : false
+}
