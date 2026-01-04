@@ -18,9 +18,9 @@
             "searchDir": [
                 "/usr/share/openocd/scripts"
             ],
-            "gdbPath": "/home/serg50012/stm/CubeCTL/GNU-tools-for-STM32/bin/arm-none-eabi-gdb",
-            "objdumpPath": "/home/serg50012/stm/CubeCTL/GNU-tools-for-STM32/bin/arm-none-eabi-objdump",
-            "nmPath": "/home/serg50012/stm/CubeCTL/GNU-tools-for-STM32/bin/arm-none-eabi-nm",
+            "gdbPath": "/usr/bin/arm-none-eabi-gdb",
+            "objdumpPath": "/usr/bin/arm-none-eabi-objdump",
+            "nmPath": "/usr/bin/arm-none-eabi-nm",
             "overrideGDBServerStartedRegex": "Info : Listening on port",
             "showDevDebugOutput": "raw"
         }
