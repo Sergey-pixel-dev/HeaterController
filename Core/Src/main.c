@@ -18,8 +18,8 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "init.h"
 #include "modbusSlave.h"
-
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 /* USER CODE END Includes */
@@ -74,7 +74,7 @@ static void MX_GPIO_Init(void);
 /* USER CODE BEGIN PFP */
 void DAC_Init(void);
 void DAC_SetVoltage(uint16_t voltage);
-
+void DAC_StartChangingV(void);
 void ADC_Init(void);
 void MeasureVref(void);
 uint16_t ADC_ReadChannel(uint8_t channel);
@@ -142,12 +142,10 @@ int main(void)
     DMA1_Stream0->CR |= DMA_SxCR_EN;
     MeasureVref();
 
-    usRegHoldingBuf[HREG_OPERATING_I] = 7000; // Рабочий ток
-    usRegHoldingBuf[HREG_STANDBY_I] = 5000;   // Ток ожидания
-    usRegHoldingBuf[HREG_CALIBRATION_I] = 0;
-    usRegHoldingBuf[HREG_CURRENT_SPEED] = 5000; // Скорость нарастания
-    usRegHoldingBuf[HREG_ACCURACY] = 50;        // Точность
-    usRegHoldingBuf[HREG_CALIB_VALUE] = 0;
+    usRegHoldingBuf[HREG_OPERATING_I] = 7000;  // Рабочий ток
+    usRegHoldingBuf[HREG_STANDBY_I] = 5000;    // Ток ожидания
+    usRegHoldingBuf[HREG_CURRENT_SPEED] = 500; // Скорость нарастания
+    usRegHoldingBuf[HREG_ACCURACY] = 50;       // Точность
 
     usCoilsBuf[0] = 0;
     SET_ENABLE_SOURCE();
@@ -256,30 +254,59 @@ int main(void)
 
             Update_Input_States();
 
-            uint8_t jumper_state = (GPIOB->IDR & (1 << JUMPER_PIN)) ? 1 : 0; // мб сделать обновление через прерывание,
-            if (jumper_state != CHECK_JMPR_STATUS()) { // чтоб тут он постоянно не крутился, калибровка - редкое событие
+            uint8_t jumper_state = (GPIOB->IDR & (1 << JUMPER_PIN)) ? 1 : 0;
+            if (jumper_state != CHECK_JMPR_STATUS()) {
                 if (jumper_state)
                     SET_JMPR_STATUS();
                 else
                     CLR_JMPR_STATUS();
             }
 
-            uint16_t U_mes = ADC_ReadChannel(ADC_CHANNEL_Umes);
-            uint16_t I_cur = Calculate_I_from_U(U_mes);
-            usRegInputBuf[IREG_I_CURRENT] = I_cur;
-            usRegInputBuf[IREG_U_MES] = U_mes;
+            uint16_t u_current_mes = ADC_ReadChannel(0);
+            uint16_t I_cur = Calculate_I_from_U(u_current_mes);
 
-            if (!CHECK_CUR_SETTING()) {
+            usRegInputBuf[IREG_I_CURRENT] = I_cur;
+            usRegInputBuf[IREG_U_CURRENT_MES] = u_current_mes;
+            usRegInputBuf[IREG_U_MES] = ADC_ReadChannel(1);
+            usRegInputBuf[IREG_COMPARATOR_U] = ADC_ReadChannel(5);
+
+            uint16_t u_27v = ADC_ReadChannel(2);
+            uint16_t u_12v = ADC_ReadChannel(3);
+            uint16_t u_m5v = ADC_ReadChannel(4);
+
+            usRegInputBuf[IREG_27V] = u_27v;
+            usRegInputBuf[IREG_12V] = u_12v;
+            usRegInputBuf[IREG_M5V] = u_m5v;
+
+            uint16_t ref_27v = usRegHoldingBuf[HREG_27V];
+            uint16_t ref_12v = usRegHoldingBuf[HREG_12V];
+            uint16_t ref_m5v = usRegHoldingBuf[HREG_M5V];
+
+            uint16_t delta_27v = (u_27v > ref_27v) ? (u_27v - ref_27v) : (ref_27v - u_27v);
+            uint16_t delta_12v = (u_12v > ref_12v) ? (u_12v - ref_12v) : (ref_12v - u_12v);
+            uint16_t delta_m5v = (u_m5v > ref_m5v) ? (u_m5v - ref_m5v) : (ref_m5v - u_m5v);
+
+            if (delta_27v > 20)
+                SET_ERROR_27V();
+            else
+                CLR_ERROR_27V();
+
+            if (delta_12v > 20)
+                SET_ERROR_12V();
+            else
+                CLR_ERROR_12V();
+
+            if (delta_m5v > 20)
+                SET_ERROR_M5V();
+            else
+                CLR_ERROR_M5V();
+
+            if (!CHECK_CUR_SETTING() && !CHECK_CALIB_IN_PR()) {
                 uint16_t I_setpoint;
                 if (CHECK_SET_OPERATING_MODE())
                     I_setpoint = usRegHoldingBuf[HREG_OPERATING_I];
-                else if (CHECK_SET_STANDBY_MODE())
-                    I_setpoint = usRegHoldingBuf[HREG_STANDBY_I];
-                else if (CHECK_CALIB_IN_PR())
-                    I_setpoint = usRegHoldingBuf[HREG_CALIBRATION_I];
                 else
                     I_setpoint = usRegHoldingBuf[HREG_STANDBY_I];
-
                 uint16_t delta_I = (I_cur >= I_setpoint) ? (I_cur - I_setpoint) : (I_setpoint - I_cur);
                 if (delta_I > usRegHoldingBuf[HREG_ACCURACY]) {
                     Set_I(I_setpoint);
@@ -356,147 +383,38 @@ static void MX_GPIO_Init(void)
     __HAL_RCC_GPIOA_CLK_ENABLE();
 
     /* USER CODE BEGIN MX_GPIO_Init_2 */
-    RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN;
-    GPIOA->MODER |= GPIO_MODER_MODER2;
-    GPIOA->MODER |= GPIO_MODER_MODER4;
-
-    // UART5: PC12 (TX)
-    RCC->AHB1ENR |= RCC_AHB1ENR_GPIOCEN | RCC_AHB1ENR_GPIODEN;
-    // PC12 = AF8 (UART5_TX)
-    GPIOC->MODER &= ~(GPIO_MODER_MODER12);
-    GPIOC->MODER |= GPIO_MODER_MODER12_1;
-    GPIOC->AFR[1] &= ~(0xF << 16);
-    GPIOC->AFR[1] |= (8 << 16);
-    GPIOC->OSPEEDR |= GPIO_OSPEEDER_OSPEEDR12;
-
-    // PD2 = AF8 (UART5_RX) + Pull-Up
-    GPIOD->MODER &= ~(GPIO_MODER_MODER2);
-    GPIOD->MODER |= GPIO_MODER_MODER2_1;
-    GPIOD->AFR[0] &= ~(0xF << 8);
-    GPIOD->AFR[0] |= (8 << 8);
-    GPIOD->PUPDR &= ~(GPIO_PUPDR_PUPDR2);
-    GPIOD->PUPDR |= GPIO_PUPDR_PUPDR2_0;
-
-    // UART4: PC10 (TX), PC11 (RX), AF8
-    // PC10 TX
-    GPIOC->MODER &= ~(GPIO_MODER_MODER10);
-    GPIOC->MODER |= GPIO_MODER_MODER10_1;      // AF
-    GPIOC->AFR[1] &= ~(0xF << 8);              // AFR[1][11:8]
-    GPIOC->AFR[1] |= (8 << 8);                 // AF8
-    GPIOC->OSPEEDR |= GPIO_OSPEEDER_OSPEEDR10; // High speed
-
-    // PC11 RX
-    GPIOC->MODER &= ~(GPIO_MODER_MODER11);
-    GPIOC->MODER |= GPIO_MODER_MODER11_1;      // AF
-    GPIOC->AFR[1] &= ~(0xF << 12);             // AFR[1][15:12]
-    GPIOC->AFR[1] |= (8 << 12);                // AF8
-    GPIOC->OSPEEDR |= GPIO_OSPEEDER_OSPEEDR11; // High speed
-    GPIOC->PUPDR &= ~(GPIO_PUPDR_PUPDR11);
-    GPIOC->PUPDR |= GPIO_PUPDR_PUPDR11_0; // Pull-Up на RX
-
-    GPIOA->MODER &= ~(GPIO_MODER_MODER0 | GPIO_MODER_MODER1);
-
-    RCC->AHB1ENR |= RCC_AHB1ENR_GPIOBEN;
-    RCC->APB2ENR |= RCC_APB2ENR_SYSCFGEN; // EXTI
-
-    GPIOB->MODER &= ~(GPIO_MODER_MODER12);
-    GPIOB->PUPDR &= ~(GPIO_PUPDR_PUPDR12);
-    GPIOB->PUPDR |= (GPIO_PUPDR_PUPDR12_0);
-    SYSCFG->EXTICR[3] &= ~(SYSCFG_EXTICR4_EXTI12);
-    SYSCFG->EXTICR[3] |= SYSCFG_EXTICR4_EXTI12_PB;
-    EXTI->IMR |= EXTI_IMR_MR12;
-    EXTI->FTSR |= EXTI_FTSR_TR12;
-    EXTI->RTSR &= ~(EXTI_RTSR_TR12);
-    NVIC_SetPriority(EXTI15_10_IRQn, 3);
-    NVIC_EnableIRQ(EXTI15_10_IRQn);
-    GPIOB->MODER &= ~(GPIO_MODER_MODER13);
-    GPIOB->PUPDR &= ~(GPIO_PUPDR_PUPDR13);
-    GPIOB->PUPDR |= (GPIO_PUPDR_PUPDR13_0);
-
-    // PB14 и PB15 - выходы (SOURCE и CONVERTER)
-    GPIOB->MODER &= ~(GPIO_MODER_MODER14 | GPIO_MODER_MODER15);
-    GPIOB->MODER |= GPIO_MODER_MODER14_0 | GPIO_MODER_MODER15_0;         // Output
-    GPIOB->OTYPER &= ~((1 << 14) | (1 << 15));                           // Push-Pull
-    GPIOB->OSPEEDR |= GPIO_OSPEEDER_OSPEEDR14 | GPIO_OSPEEDER_OSPEEDR15; // High speed
-    GPIOB->BSRR = (1 << (14 + 16)) | (1 << (15 + 16));                   // Начальное состояние LOW
-
-    // PB0 - вход с подтяжкой (JUMPER)
-    GPIOB->MODER &= ~GPIO_MODER_MODER0; // Input
-    GPIOB->PUPDR &= ~GPIO_PUPDR_PUPDR0;
-    GPIOB->PUPDR |= GPIO_PUPDR_PUPDR0_0; // Pull-Up
-
-    // PB1 - SOURCE_STATUS (вход, Pull-Down)
-    GPIOB->MODER &= ~GPIO_MODER_MODER1;
-    GPIOB->PUPDR &= ~GPIO_PUPDR_PUPDR1;
-    GPIOB->PUPDR |= GPIO_PUPDR_PUPDR1_1;
-
-    // PB2 - CONVERTER_STATUS (вход, Pull-Down)
-    GPIOB->MODER &= ~GPIO_MODER_MODER2;
-    GPIOB->PUPDR &= ~GPIO_PUPDR_PUPDR2;
-    GPIOB->PUPDR |= GPIO_PUPDR_PUPDR2_1;
-
-    // PB3 - COMP_KZ (вход, Pull-Down, EXTI на оба фронта)
-    GPIOB->MODER &= ~GPIO_MODER_MODER3;
-    GPIOB->PUPDR &= ~GPIO_PUPDR_PUPDR3;
-    GPIOB->PUPDR |= GPIO_PUPDR_PUPDR3_1;
-
-    SYSCFG->EXTICR[0] &= ~(SYSCFG_EXTICR1_EXTI3);
-    SYSCFG->EXTICR[0] |= SYSCFG_EXTICR1_EXTI3_PB;
-    EXTI->IMR |= EXTI_IMR_MR3;
-    EXTI->FTSR |= EXTI_FTSR_TR3;
-    EXTI->RTSR |= EXTI_RTSR_TR3;
-
-    NVIC_SetPriority(EXTI3_IRQn, 3);
-    NVIC_EnableIRQ(EXTI3_IRQn);
+    GPIO_Init();
     /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
-void DMA_Init(void)
-{
-    RCC->AHB1ENR |= RCC_AHB1ENR_DMA1EN;
-
-    // UART5 TX
-    DMA1_Stream7->CR |= DMA_SxCR_CHSEL_2 | DMA_SxCR_PL_1 | DMA_SxCR_MINC | DMA_SxCR_DIR_0 | DMA_SxCR_TCIE;
-    DMA1_Stream7->PAR = (uint32_t)&UART5->DR;
-    DMA1_Stream7->FCR = 0;
-    // UART5 RX
-    DMA1_Stream0->CR |= DMA_SxCR_CHSEL_2 | DMA_SxCR_PL_1 | DMA_SxCR_MINC;
-    DMA1_Stream0->PAR = (uint32_t)&UART5->DR;
-    DMA1_Stream0->M0AR = (uint32_t)&RxBufferUART5;
-    DMA1_Stream0->NDTR = UART5_RX_BUF_SIZE;
-    DMA1_Stream0->FCR = 0;
-
-    // UART4 TX
-    DMA1_Stream4->CR |=
-        DMA_SxCR_CHSEL_2 | DMA_SxCR_PL_1 | DMA_SxCR_PL_0 | DMA_SxCR_MINC | DMA_SxCR_DIR_0 | DMA_SxCR_TCIE;
-    DMA1_Stream4->PAR = (uint32_t)&UART4->DR;
-    DMA1_Stream4->FCR = 0;
-
-    NVIC_SetPriority(DMA1_Stream0_IRQn, 1);
-    NVIC_EnableIRQ(DMA1_Stream0_IRQn);
-    NVIC_SetPriority(DMA1_Stream7_IRQn, 1);
-    NVIC_EnableIRQ(DMA1_Stream7_IRQn);
-    NVIC_SetPriority(DMA1_Stream4_IRQn, 0);
-    NVIC_EnableIRQ(DMA1_Stream4_IRQn);
-}
-void DAC_Init(void)
-{
-    RCC->APB1ENR |= RCC_APB1ENR_DACEN;
-    DAC->CR |= DAC_CR_TSEL1_2 | DAC_CR_TSEL1_1 | DAC_CR_TSEL1_0 | DAC_CR_TEN1;
-}
 void DAC_SetVoltage(uint16_t voltage)
 {
     DAC->DHR12R1 = ((uint32_t)voltage * (0xFFF + 1) / vdda) & 0xFFF;
     DAC->SWTRIGR |= DAC_SWTRIGR_SWTRIG1;
 }
-
-void ADC_Init(void)
+void DAC_ChangeVoltage(void)
 {
-    RCC->APB2ENR |= RCC_APB2ENR_ADC1EN;
-    ADC->CCR |= 1 << 16; // prescaler = 4
-    ADC->CCR |= ADC_CCR_TSVREFE;
-    ADC1->CR2 |= ADC_CR2_EOCS;
+    if (DAC->DHR12R1 > usRegHoldingBuf[HREG_CALIB_VALUE])
+        DAC->DHR12R1 -= 1;
+    else if (DAC->DHR12R1 < usRegHoldingBuf[HREG_CALIB_VALUE])
+        DAC->DHR12R1 += 1;
+    else {
+        CLR_CUR_SETTING();
+        // Остановка TIM6
+        TIM6->CR1 &= ~TIM_CR1_CEN;
+        TIM6->CNT = 0;
+        return;
+    }
+    DAC->SWTRIGR |= DAC_SWTRIGR_SWTRIG1;
+}
+void DAC_StartChangingV(void)
+{
+    SET_CUR_SETTING();
+    // Запуск TIM6
+    TIM6->CNT = 0;
+    TIM6->SR &= ~TIM_SR_UIF;
+    TIM6->CR1 |= TIM_CR1_CEN;
 }
 uint16_t ADC_ReadChannel(uint8_t channel)
 {
@@ -517,61 +435,6 @@ void MeasureVref(void)
     ADC1->SR = 0;
 }
 
-void UART_Init(void)
-{
-    // UART5
-    RCC->APB1ENR |= RCC_APB1ENR_UART5EN;
-    UART5->CR1 |= USART_CR1_RE | USART_CR1_TE | USART_CR1_UE | USART_CR1_IDLEIE;
-    UART5->CR3 |= USART_CR3_DMAT | USART_CR3_DMAR;
-    UART5->BRR = 0x187; // 115200, 45Мгц
-
-    NVIC_SetPriority(UART5_IRQn, 1);
-    NVIC_EnableIRQ(UART5_IRQn);
-    // UART4
-    RCC->APB1ENR |= RCC_APB1ENR_UART4EN;
-    UART4->BRR = 0x187;
-    UART4->CR1 |= USART_CR1_UE | USART_CR1_RE | USART_CR1_TE | USART_CR1_RXNEIE;
-    UART4->CR3 |= USART_CR3_DMAT;
-    NVIC_SetPriority(UART4_IRQn, 0);
-    NVIC_EnableIRQ(UART4_IRQn);
-}
-void MODBUS_Timer_Init(void)
-{
-    RCC->APB1ENR |= RCC_APB1ENR_TIM3EN;
-    TIM3->CNT = 1;
-    TIM3->PSC = 899;
-    TIM3->ARR = 65535;
-
-    TIM3->CCR1 = (MODBUS_T1_5_US / 10);
-    TIM3->CCR2 = (MODBUS_T3_5_US / 10);
-    TIM3->CCER |= TIM_CCER_CC1E | TIM_CCER_CC2E;
-    TIM3->DIER |= TIM_DIER_CC1IE | TIM_DIER_CC2IE;
-
-    TIM3->CCMR1 |= TIM_CCMR1_OC1M_1 | TIM_CCMR1_OC1M_0;
-    TIM3->CCMR1 |= TIM_CCMR1_OC2M_1 | TIM_CCMR1_OC2M_0;
-
-    TIM3->CR1 |= TIM_CR1_OPM;
-    TIM3->EGR |= TIM_EGR_UG;
-    TIM3->SR &= ~TIM_SR_UIF;
-    NVIC_SetPriority(TIM3_IRQn, 2);
-    NVIC_EnableIRQ(TIM3_IRQn);
-}
-
-void TIM6_Init(void)
-{
-    RCC->APB1ENR |= RCC_APB1ENR_TIM6EN;
-    TIM6->PSC = 8999;
-    TIM6->ARR = 714;
-    TIM6->CNT = 0;
-    TIM6->CR1 &= ~TIM_CR1_UDIS;
-    TIM6->CR1 |= TIM_CR1_URS;
-    TIM6->CR1 &= ~TIM_CR1_OPM;
-    TIM6->EGR |= TIM_EGR_UG;
-    TIM6->SR &= ~TIM_SR_UIF;
-    TIM6->DIER |= TIM_DIER_UIE;
-    NVIC_SetPriority(TIM6_DAC_IRQn, 2);
-    NVIC_EnableIRQ(TIM6_DAC_IRQn);
-}
 void UART4_Transmit(uint8_t *data, uint16_t size)
 {
     for (uint16_t i = 0; i < size; i++) {
@@ -618,34 +481,33 @@ void UART4_Transmit_DMA_Blocking(uint8_t *data, uint16_t size)
 
 void Calibration(void)
 {
-    if (CHECK_CALIB_IN_PR() && (c_index < N_SEGMENTS) && CHECK_SET_CALIB_MODE()) {
-        uint16_t u_mes = ADC_ReadChannel(ADC_CHANNEL_Umes);
-        uint16_t segment = (MIN_U + c_index * ((MAX_U - MIN_U) / N_SEGMENTS));
+    if (CHECK_CALIB_IN_PR() && (c_index == N_SEGMENTS) && !CHECK_CUR_SETTING()) {
+        uint16_t u_mes = ADC_ReadChannel(0);
 
-        c_a[c_index] = (uint16_t)(((uint32_t)usRegHoldingBuf[HREG_CALIB_VALUE] << Q12_SHIFT) / segment);
-        c_b[c_index] = (uint16_t)(((uint32_t)usRegHoldingBuf[HREG_CALIB_VALUE] << Q12_SHIFT) / u_mes);
+        c_a[c_index] = (uint16_t)(((uint32_t)usRegHoldingBuf[IREG_OSCILLOSCOPE_I] << Q12_SHIFT) /
+                                  (vdda * usRegHoldingBuf[HREG_CALIB_VALUE] / (0xFFF + 1)));
+        c_b[c_index] = (uint16_t)(((uint32_t)usRegHoldingBuf[IREG_OSCILLOSCOPE_I] << Q12_SHIFT) / u_mes);
 
         uint16_t scaled_c_a = (uint16_t)((((uint32_t)c_a[c_index] * 1000) + Q12_HALF) >> Q12_SHIFT);
         uint16_t scaled_c_b = (uint16_t)((((uint32_t)c_b[c_index] * 1000) + Q12_HALF) >> Q12_SHIFT);
 
-        usRegInputBuf[IREG_CALIB_INDEX] = c_index;
+        usRegInputBuf[IREG_CALIB_STEP] = c_index + 1;
         usRegInputBuf[IREG_CALIB_CA] = scaled_c_a;
         usRegInputBuf[IREG_CALIB_CB] = scaled_c_b;
         usRegHoldingBuf[HREG_CALIB_VALUE] = 0;
 
         c_index++;
-        usRegHoldingBuf[HREG_CALIBRATION_I] = MIN_I + c_index * ((MAX_I - MIN_I) / N_SEGMENTS);
-        return;
+        usRegInputBuf[IREG_OSCILLOSCOPE_I] = MIN_I + c_index * ((MAX_I - MIN_I) / N_SEGMENTS);
     }
-
-    if (c_index == N_SEGMENTS || !CHECK_SET_CALIB_MODE()) {
+    if (c_index == N_SEGMENTS + 1 || !CHECK_SET_CALIB_MODE()) {
+        TIM6->ARR = 714;
         c_index = 0;
         CLR_CALIB_MODE();
         CLR_CALIB_MODE_IN_PR();
         SET_STANDBY_MODE();
-        usRegHoldingBuf[HREG_CALIBRATION_I] = 0;
+        usRegInputBuf[IREG_OSCILLOSCOPE_I] = 0;
         usRegHoldingBuf[HREG_CALIB_VALUE] = 0;
-        usRegInputBuf[IREG_CALIB_INDEX] = 0;
+        usRegInputBuf[IREG_CALIB_STEP] = 0;
         usRegInputBuf[IREG_CALIB_CA] = 0;
         usRegInputBuf[IREG_CALIB_CB] = 0;
     }
@@ -659,7 +521,6 @@ void Set_I(uint16_t i)
     TIM6->SR &= ~TIM_SR_UIF;
     TIM6->CR1 |= TIM_CR1_CEN;
 }
-
 void StopChange_I(void)
 {
     CLR_CUR_SETTING();
@@ -672,7 +533,7 @@ void Change_I(void)
     if (!(CHECK_CONVERTER_STATUS() && CHECK_SOURCE_STATUS()))
         return;
 
-    uint16_t U_mes = ADC_ReadChannel(ADC_CHANNEL_Umes);
+    uint16_t U_mes = ADC_ReadChannel(0);
     uint16_t coef_b = Get_c_b_by_U_mes(U_mes);
     uint16_t I_cur = (uint16_t)(((uint32_t)U_mes * coef_b) >> Q12_SHIFT);
     uint16_t coef_a = Get_c_a_by_I(I_cur);
@@ -685,8 +546,6 @@ void Change_I(void)
         I_set_cur_local = usRegHoldingBuf[HREG_OPERATING_I];
     else if (CHECK_SET_STANDBY_MODE())
         I_set_cur_local = usRegHoldingBuf[HREG_STANDBY_I];
-    else if (CHECK_CALIB_IN_PR())
-        I_set_cur_local = usRegHoldingBuf[HREG_CALIBRATION_I];
     else
         I_set_cur_local = usRegHoldingBuf[HREG_STANDBY_I]; // По умолчанию
 
@@ -709,16 +568,16 @@ void Change_I(void)
 
     uint16_t new_voltage;
     if (I_cur < I_set_cur_local) {
-        new_voltage = usRegInputBuf[IREG_U_DAC] + delta_U;
+        new_voltage = usRegInputBuf[IREG_U_SET] + delta_U;
     } else {
-        new_voltage = usRegInputBuf[IREG_U_DAC] - delta_U;
+        new_voltage = usRegInputBuf[IREG_U_SET] - delta_U;
     }
 
     if (new_voltage > MAX_U)
         new_voltage = MAX_U;
 
     DAC_SetVoltage(new_voltage);
-    usRegInputBuf[IREG_U_DAC] = new_voltage;
+    usRegInputBuf[IREG_U_SET] = new_voltage;
 }
 uint16_t Get_c_a_by_I(uint16_t i)
 {
@@ -828,19 +687,20 @@ void SetCalibrationMode(void)
 
     // Вход в режим калибровки
     if (!CHECK_JMPR_STATUS()) {
-        usRegHoldingBuf[HREG_CALIBRATION_I] = CALIB_INITIAL_I;
+        usRegHoldingBuf[IREG_OSCILLOSCOPE_I] = CALIB_INITIAL_I;
+        TIM6->ARR = 500;
         SET_CALIB_MODE_IN_PR();
     }
 }
 
 void Coils_ApplyToPins(void)
 {
-    if (CHECK_SOURCE_STATUS_COIL())
+    if (CHECK_ENABLE_SOURCE())
         GPIOB->BSRR = (1 << SOURCE_PIN);
     else
         GPIOB->BSRR = (1 << (SOURCE_PIN + 16));
 
-    if (CHECK_CONVERTER_STATUS_COIL())
+    if (CHECK_ENABLE_CONVERTER())
         GPIOB->BSRR = (1 << CONVERTER_PIN);
     else
         GPIOB->BSRR = (1 << (CONVERTER_PIN + 16));

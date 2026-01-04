@@ -217,6 +217,8 @@ uint8_t writeSingleReg(void)
     if (reg_idx == 0 && old_val != usRegHoldingBuf[reg_idx]) {
         Set_I(usRegHoldingBuf[0]);
     }
+    if (reg_idx == 4)
+        DAC_StartChangingV();
 
     TxBuffer[0] = SLAVE_ID;
     TxBuffer[1] = RxBuffer[1];
@@ -254,11 +256,11 @@ uint8_t writeSingleCoil(void)
 
     if (coil_num == COIL_BIT_ENABLE_SOURCE || coil_num == COIL_BIT_ENABLE_CONVERTER) {
         Coils_ApplyToPins();
-    } else if (coil_num == COIL_BIT_OPERATING_MODE) {
+    } else if (coil_num == COIL_BIT_SET_OPERATING_MODE) {
         SetOperatingMode();
-    } else if (coil_num == COIL_BIT_STANDBY_MODE) {
+    } else if (coil_num == COIL_BIT_SET_STANDBY_MODE) {
         SetStandbyMode();
-    } else if (coil_num == COIL_BIT_CALIB_MODE) {
+    } else if (coil_num == COIL_BIT_SET_CALIB_MODE) {
         SetCalibrationMode();
     }
 
@@ -307,15 +309,15 @@ uint8_t writeMultiCoils(void)
         uint16_t coil_num = (startAddr - COILS_START) + i;
         if (coil_num == COIL_BIT_ENABLE_SOURCE || coil_num == COIL_BIT_ENABLE_CONVERTER) {
             need_apply_pins = 1;
-        } else if (coil_num == COIL_BIT_OPERATING_MODE) {
+        } else if (coil_num == COIL_BIT_SET_OPERATING_MODE) {
             uint8_t new_value = ((usCoilsBuf[startByte] >> bitPosition) & 0x01);
             if (new_value == 1)
                 need_operating = 1;
-        } else if (coil_num == COIL_BIT_STANDBY_MODE) {
+        } else if (coil_num == COIL_BIT_SET_STANDBY_MODE) {
             uint8_t new_value = ((usCoilsBuf[startByte] >> bitPosition) & 0x01);
             if (new_value == 1)
                 need_standby = 1;
-        } else if (coil_num == COIL_BIT_CALIB_MODE) {
+        } else if (coil_num == COIL_BIT_SET_CALIB_MODE) {
             uint8_t new_value = ((usCoilsBuf[startByte] >> bitPosition) & 0x01);
             if (new_value == 1)
                 need_calib = 1;

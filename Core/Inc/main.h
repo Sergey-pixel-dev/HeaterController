@@ -69,10 +69,6 @@ extern "C" {
 
 #define SOURCE_STATUS_PIN 1    // PB1 - Фактическое состояние источника (вход)
 #define CONVERTER_STATUS_PIN 2 // PB2 - Фактическое состояние преобразователя (вход)
-#define COMP_KZ_PIN 3          // PB3 - Компаратор КЗ (вход, прерывание)
-
-// АЦП канал для измерения напряжения
-#define ADC_CHANNEL_Umes 1 // PA1
 
 // ============================================================================
 // Q4.12 Fixed Point арифметика
@@ -84,18 +80,19 @@ extern "C" {
 // ============================================================================
 // Биты Discrete Inputs (usDiscreteBuf[0])
 // ============================================================================
-#define DISCRETE_BIT_CUR_SETTING 0      // Флаг процесса установки тока
-#define DISCRETE_BIT_SOURCE_STATUS 1    // Фактическое состояние SOURCE (PB1)
-#define DISCRETE_BIT_CONVERTER_STATUS 2 // Фактическое состояние CONVERTER (PB2)
-#define DISCRETE_BIT_KZ_STATUS 3        // Состояние компаратора КЗ (PB3)
-#define DISCRETE_BIT_CALIB_IN_PR 4      // Флаг процесса калибровки
-#define DISCRETE_BIT_JMPR_STATUS 5      // Статус джампера (PB0)
+#define DISCRETE_BIT_CUR_SETTING 0
+#define DISCRETE_BIT_SOURCE_STATUS 1
+#define DISCRETE_BIT_CONVERTER_STATUS 2
+#define DISCRETE_BIT_CALIB_IN_PR 3
+#define DISCRETE_BIT_JMPR_STATUS 4
+#define DISCRETE_BIT_ERROR_27V 5
+#define DISCRETE_BIT_ERROR_12V 6
+#define DISCRETE_BIT_ERROR_M5V 7
 
 // Проверка битов
 #define CHECK_CUR_SETTING() ((usDiscreteBuf[0] >> DISCRETE_BIT_CUR_SETTING) & 0x01)
 #define CHECK_SOURCE_STATUS() ((usDiscreteBuf[0] >> DISCRETE_BIT_SOURCE_STATUS) & 0x01)
 #define CHECK_CONVERTER_STATUS() ((usDiscreteBuf[0] >> DISCRETE_BIT_CONVERTER_STATUS) & 0x01)
-#define CHECK_KZ_STATUS() ((usDiscreteBuf[0] >> DISCRETE_BIT_KZ_STATUS) & 0x01)
 #define CHECK_CALIB_IN_PR() ((usDiscreteBuf[0] >> DISCRETE_BIT_CALIB_IN_PR) & 0x01)
 #define CHECK_JMPR_STATUS() ((usDiscreteBuf[0] >> DISCRETE_BIT_JMPR_STATUS) & 0x01)
 
@@ -109,74 +106,86 @@ extern "C" {
 #define SET_CONVERTER_STATUS() (usDiscreteBuf[0] |= (1U << DISCRETE_BIT_CONVERTER_STATUS))
 #define CLR_CONVERTER_STATUS() (usDiscreteBuf[0] &= ~(1U << DISCRETE_BIT_CONVERTER_STATUS))
 
-#define SET_KZ_STATUS() (usDiscreteBuf[0] |= (1U << DISCRETE_BIT_KZ_STATUS))
-#define CLR_KZ_STATUS() (usDiscreteBuf[0] &= ~(1U << DISCRETE_BIT_KZ_STATUS))
-
 #define SET_CALIB_MODE_IN_PR() (usDiscreteBuf[0] |= (1U << DISCRETE_BIT_CALIB_IN_PR))
 #define CLR_CALIB_MODE_IN_PR() (usDiscreteBuf[0] &= ~(1U << DISCRETE_BIT_CALIB_IN_PR))
 
 #define SET_JMPR_STATUS() (usDiscreteBuf[0] |= (1U << DISCRETE_BIT_JMPR_STATUS))
 #define CLR_JMPR_STATUS() (usDiscreteBuf[0] &= ~(1U << DISCRETE_BIT_JMPR_STATUS))
 
-// ============================================================================
-// Биты Coils (usCoilsBuf[0])
-// ============================================================================
-#define COIL_BIT_ENABLE_SOURCE 0    // Включение источника
-#define COIL_BIT_ENABLE_CONVERTER 1 // Включение преобразователя
-#define COIL_BIT_OPERATING_MODE 2   // Рабочий режим
-#define COIL_BIT_STANDBY_MODE 3     // Режим ожидания
-#define COIL_BIT_CALIB_MODE 4       // Режим калибровки
+#define SET_ERROR_27V() (usDiscreteBuf[0] |= (1U << DISCRETE_BIT_ERROR_27V))
+#define CLR_ERROR_27V() (usDiscreteBuf[0] &= ~(1U << DISCRETE_BIT_ERROR_27V))
 
-// Проверка битов COILS
-#define CHECK_SOURCE_STATUS_COIL() ((usCoilsBuf[0] >> COIL_BIT_ENABLE_SOURCE) & 0x01)
-#define CHECK_CONVERTER_STATUS_COIL() ((usCoilsBuf[0] >> COIL_BIT_ENABLE_CONVERTER) & 0x01)
-#define CHECK_SET_OPERATING_MODE() ((usCoilsBuf[0] >> COIL_BIT_OPERATING_MODE) & 0x01)
-#define CHECK_SET_STANDBY_MODE() ((usCoilsBuf[0] >> COIL_BIT_STANDBY_MODE) & 0x01)
-#define CHECK_SET_CALIB_MODE() ((usCoilsBuf[0] >> COIL_BIT_CALIB_MODE) & 0x01)
+#define SET_ERROR_12V() (usDiscreteBuf[0] |= (1U << DISCRETE_BIT_ERROR_12V))
+#define CLR_ERROR_12V() (usDiscreteBuf[0] &= ~(1U << DISCRETE_BIT_ERROR_12V))
 
-// Установка/сброс битов
+#define SET_ERROR_M5V() (usDiscreteBuf[0] |= (1U << DISCRETE_BIT_ERROR_M5V))
+#define CLR_ERROR_M5V() (usDiscreteBuf[0] &= ~(1U << DISCRETE_BIT_ERROR_M5V))
+
+// ============================================================================
+// Coils (usCoilsBuf[0])
+// ============================================================================
+#define COIL_BIT_ENABLE_SOURCE 0
+#define COIL_BIT_ENABLE_CONVERTER 1
+#define COIL_BIT_SET_OPERATING_MODE 2
+#define COIL_BIT_SET_STANDBY_MODE 3
+#define COIL_BIT_SET_CALIB_MODE 4
+
+#define CHECK_ENABLE_SOURCE() ((usDiscreteBuf[0] >> DISCRETE_BIT_SOURCE_STATUS) & 0x01)
+#define CHECK_ENABLE_CONVERTER() ((usDiscreteBuf[0] >> DISCRETE_BIT_CONVERTER_STATUS) & 0x01)
+#define CHECK_SET_OPERATING_MODE() ((usCoilsBuf[0] >> COIL_BIT_SET_OPERATING_MODE) & 0x01)
+#define CHECK_SET_STANDBY_MODE() ((usCoilsBuf[0] >> COIL_BIT_SET_STANDBY_MODE) & 0x01)
+#define CHECK_SET_CALIB_MODE() ((usCoilsBuf[0] >> COIL_BIT_SET_CALIB_MODE) & 0x01)
+
 #define SET_ENABLE_SOURCE() (usCoilsBuf[0] |= (1U << COIL_BIT_ENABLE_SOURCE))
 #define CLR_ENABLE_SOURCE() (usCoilsBuf[0] &= ~(1U << COIL_BIT_ENABLE_SOURCE))
 
 #define SET_ENABLE_CONVERTER() (usCoilsBuf[0] |= (1U << COIL_BIT_ENABLE_CONVERTER))
 #define CLR_ENABLE_CONVERTER() (usCoilsBuf[0] &= ~(1U << COIL_BIT_ENABLE_CONVERTER))
 
-#define SET_OPERATING_MODE() (usCoilsBuf[0] |= (1U << COIL_BIT_OPERATING_MODE))
-#define CLR_OPERATING_MODE() (usCoilsBuf[0] &= ~(1U << COIL_BIT_OPERATING_MODE))
+#define SET_OPERATING_MODE() (usCoilsBuf[0] |= (1U << COIL_BIT_SET_OPERATING_MODE))
+#define CLR_OPERATING_MODE() (usCoilsBuf[0] &= ~(1U << COIL_BIT_SET_OPERATING_MODE))
 
-#define SET_STANDBY_MODE() (usCoilsBuf[0] |= (1U << COIL_BIT_STANDBY_MODE))
-#define CLR_STANDBY_MODE() (usCoilsBuf[0] &= ~(1U << COIL_BIT_STANDBY_MODE))
+#define SET_STANDBY_MODE() (usCoilsBuf[0] |= (1U << COIL_BIT_SET_STANDBY_MODE))
+#define CLR_STANDBY_MODE() (usCoilsBuf[0] &= ~(1U << COIL_BIT_SET_STANDBY_MODE))
 
-#define SET_CALIB_MODE() (usCoilsBuf[0] |= (1U << COIL_BIT_CALIB_MODE))
-#define CLR_CALIB_MODE() (usCoilsBuf[0] &= ~(1U << COIL_BIT_CALIB_MODE))
-
-// ============================================================================
-// Индексы Holding Registers
-// ============================================================================
-#define HREG_OPERATING_I 0   // Рабочий ток (мА)
-#define HREG_STANDBY_I 1     // Ток ожидания (мА)
-#define HREG_CALIBRATION_I 2 // Ток калибровки (мА)
-#define HREG_CURRENT_SPEED 3 // Скорость нарастания (мА/с)
-#define HREG_ACCURACY 4      // Точность (порог дельты, мА)
-#define HREG_CALIB_VALUE 5   // Вводимое значение для калибровки (мА)
+#define SET_CALIB_MODE() (usCoilsBuf[0] |= (1U << COIL_BIT_SET_CALIB_MODE))
+#define CLR_CALIB_MODE() (usCoilsBuf[0] &= ~(1U << COIL_BIT_SET_CALIB_MODE))
 
 // ============================================================================
-// Индексы Input Registers
+// Holding Registers
 // ============================================================================
-#define IREG_I_CURRENT 0   // Текущий ток (мА)
-#define IREG_U_DAC 1       // Напряжение DAC (мВ)
-#define IREG_U_MES 2       // Измеренное напряжение (мВ)
-#define IREG_CALIB_INDEX 3 // Индекс калибровки (0-9)
-#define IREG_CALIB_CA 4    // Коэффициент c_a (масштабированный *1000)
-#define IREG_CALIB_CB 5    // Коэффициент c_b (масштабированный *1000)
+#define HREG_OPERATING_I 0
+#define HREG_STANDBY_I 1
+#define HREG_CURRENT_SPEED 2
+#define HREG_ACCURACY 3
+#define HREG_CALIB_VALUE 4
+#define HREG_27V 5
+#define HREG_12V 6
+#define HREG_M5V 7
+
+// ============================================================================
+// Input Registers
+// ============================================================================
+#define IREG_I_CURRENT 0
+#define IREG_U_SET 1
+#define IREG_U_CURRENT_MES 2
+#define IREG_U_MES 3
+#define IREG_COMPARATOR_U 4
+#define IREG_27V 5
+#define IREG_12V 6
+#define IREG_M5V 7
+#define IREG_CALIB_STEP 8
+#define IREG_OSCILLOSCOPE_I 9
+#define IREG_CALIB_CA 10
+#define IREG_CALIB_CB 11
 
 // ============================================================================
 // Значения по умолчанию
 // ============================================================================
-#define CALIB_INITIAL_I 750       // Начальный ток для калибровки
-#define COEF_A_DEFAULT 6          // c_a по умолчанию (без сдвига)
-#define COEF_B_DEFAULT 7          // c_b по умолчанию (без сдвига)
-#define LOOP_UPDATE_PERIOD_MS 150 // Период обновления главного цикла
+#define CALIB_INITIAL_I 1000 // Начальный ток для калибровки
+#define COEF_A_DEFAULT 6     // c_a по умолчанию (без сдвига)
+#define COEF_B_DEFAULT 7     // c_b по умолчанию (без сдвига)
+#define LOOP_UPDATE_PERIOD_MS 150
 /* USER CODE END EM */
 
 /* Exported functions prototypes ---------------------------------------------*/
@@ -186,6 +195,8 @@ void Error_Handler(void);
 extern void UART5_Transmit_DMA_Blocking(uint8_t *data, uint16_t size);
 extern void Calibration(void);
 extern void Change_I(void);
+extern void DAC_ChangeVoltage(void);
+extern void DAC_StartChangingV(void);
 extern void Set_I(uint16_t i);
 extern void StopChange_I(void);
 extern void Coils_ApplyToPins(void);

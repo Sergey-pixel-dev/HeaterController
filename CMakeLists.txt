@@ -50,6 +50,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
     ${CMAKE_SOURCE_DIR}/Core/Src/modbusSlave.c
     ${CMAKE_SOURCE_DIR}/Core/Src/modbus_crc.c
+    ${CMAKE_SOURCE_DIR}/Core/Src/init.c
 )
 
 # Add include paths

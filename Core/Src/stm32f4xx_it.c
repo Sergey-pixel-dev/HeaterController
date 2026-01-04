@@ -270,26 +270,15 @@ void EXTI15_10_IRQHandler(void)
     /* USER CODE END EXTI15_10_IRQn 1 */
 }
 
-void EXTI3_IRQHandler(void)
-{
-    if (EXTI->PR & EXTI_PR_PR3) {
-        EXTI->PR = EXTI_PR_PR3;
-
-        uint8_t kz_state = (GPIOB->IDR & (1 << COMP_KZ_PIN)) ? 1 : 0;
-
-        if (kz_state)
-            SET_KZ_STATUS();
-        else
-            CLR_KZ_STATUS();
-    }
-}
-
 void TIM6_DAC_IRQHandler(void)
 {
     /* USER CODE BEGIN TIM6_DAC_IRQn 0 */
     if (TIM6->SR & TIM_SR_UIF) {
         TIM6->SR &= ~TIM_SR_UIF;
-        Change_I();
+        if (CHECK_CALIB_IN_PR())
+            DAC_ChangeVoltage();
+        else
+            Change_I();
     }
     /* USER CODE END TIM6_DAC_IRQn 0 */
     /* USER CODE BEGIN TIM6_DAC_IRQn 1 */
