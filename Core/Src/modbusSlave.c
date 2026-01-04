@@ -1,6 +1,5 @@
 #include "modbusSlave.h"
 #include "main.h"
-#include <string.h>
 uint8_t *RxBuffer;
 uint8_t *TxBuffer;
 
@@ -179,17 +178,27 @@ uint8_t writeHoldingRegs(void)
         return 1;
     }
 
-    int iRegIndex = (int)(startAddr - REG_HOLDING_START);
+    uint16_t startIdx = startAddr - REG_HOLDING_START;
+    uint8_t reg0_changed = 0;
+    uint8_t reg4_changed = 0;
+
+    int iRegIndex = startIdx;
     int indx = 7;
     while (numRegs > 0) {
-        usRegHoldingBuf[iRegIndex++] = (RxBuffer[indx] << 8) | RxBuffer[indx + 1];
+        usRegHoldingBuf[iRegIndex] = (RxBuffer[indx] << 8) | RxBuffer[indx + 1];
+        if (iRegIndex == 0)
+            reg0_changed = 1;
+        if (iRegIndex == 4)
+            reg4_changed = 1;
+        iRegIndex++;
         indx += 2;
         numRegs--;
     }
 
-    if (iRegIndex > 0 && (startAddr - REG_HOLDING_START) == 0) {
+    if (reg0_changed)
         Set_I(usRegHoldingBuf[0]);
-    }
+    if (reg4_changed)
+        DAC_StartChangingV();
 
     TxBuffer[0] = SLAVE_ID;
     TxBuffer[1] = RxBuffer[1];

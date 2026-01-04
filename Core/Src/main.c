@@ -42,7 +42,7 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-uint16_t vdda;
+uint16_t vdda = 3300;
 uint8_t RxBufferUART5[UART5_TX_BUF_SIZE];
 uint8_t TxBufferUART5[UART5_TX_BUF_SIZE];
 uint16_t SizeRxBuf = 0;
@@ -90,6 +90,7 @@ void Calibration(void);
 void Set_I(uint16_t i);
 void Change_I(void);
 
+void HandleModbusRequest(uint8_t *RxBuf);
 void TIM6_Init(void);
 uint16_t Get_c_a_by_I(uint16_t i);
 uint16_t Get_c_b_by_U_mes(uint16_t u);
@@ -166,42 +167,11 @@ int main(void)
         /* USER CODE END WHILE */
 
         /* USER CODE BEGIN 3 */
-
         if (uart4_event_data_ready && modbus_state == MODBUS_FRAME_COMPLETE) {
             TransmitFuncPtr = &UART4_Transmit_DMA_Blocking;
             RxBuffer = RxBufferUART4;
             TxBuffer = TxBufferUART4;
-            if (RxBufferUART4[0] == SLAVE_ID) {
-                switch (RxBufferUART4[1]) {
-                    case 0x03:
-                        readHoldingRegs();
-                        break;
-                    case 0x04:
-                        readInputRegs();
-                        break;
-                    case 0x01:
-                        readCoils();
-                        break;
-                    case 0x02:
-                        readInputs();
-                        break;
-                    case 0x06:
-                        writeSingleReg();
-                        break;
-                    case 0x10:
-                        writeHoldingRegs();
-                        break;
-                    case 0x05:
-                        writeSingleCoil();
-                        break;
-                    case 0x0F:
-                        writeMultiCoils();
-                        break;
-                    default:
-                        modbusException(ILLEGAL_FUNCTION);
-                        break;
-                }
-            }
+            HandleModbusRequest(RxBufferUART4);
             SizeRxBufUART4 = 0;
             uart4_event_data_ready = 0;
             modbus_state = MODBUS_IDLE;
@@ -212,35 +182,7 @@ int main(void)
                 TransmitFuncPtr = &UART5_Transmit_DMA_Blocking;
                 RxBuffer = RxBufferUART5;
                 TxBuffer = TxBufferUART5;
-                switch (RxBufferUART5[1]) {
-                    case 0x03:
-                        readHoldingRegs();
-                        break;
-                    case 0x04:
-                        readInputRegs();
-                        break;
-                    case 0x01:
-                        readCoils();
-                        break;
-                    case 0x02:
-                        readInputs();
-                        break;
-                    case 0x06:
-                        writeSingleReg();
-                        break;
-                    case 0x10:
-                        writeHoldingRegs();
-                        break;
-                    case 0x05:
-                        writeSingleCoil();
-                        break;
-                    case 0x0F:
-                        writeMultiCoils();
-                        break;
-                    default:
-                        modbusException(ILLEGAL_FUNCTION);
-                        break;
-                }
+                HandleModbusRequest(RxBufferUART5);
             }
             DMA1_Stream0->NDTR = UART5_RX_BUF_SIZE;
             DMA1->LIFCR |= DMA_LIFCR_CTCIF0;
@@ -282,21 +224,17 @@ int main(void)
             uint16_t ref_12v = usRegHoldingBuf[HREG_12V];
             uint16_t ref_m5v = usRegHoldingBuf[HREG_M5V];
 
-            uint16_t delta_27v = (u_27v > ref_27v) ? (u_27v - ref_27v) : (ref_27v - u_27v);
-            uint16_t delta_12v = (u_12v > ref_12v) ? (u_12v - ref_12v) : (ref_12v - u_12v);
-            uint16_t delta_m5v = (u_m5v > ref_m5v) ? (u_m5v - ref_m5v) : (ref_m5v - u_m5v);
-
-            if (delta_27v > 20)
+            if (ABS_DIFF(u_27v, ref_27v) > 20)
                 SET_ERROR_27V();
             else
                 CLR_ERROR_27V();
 
-            if (delta_12v > 20)
+            if (ABS_DIFF(u_12v, ref_12v) > 20)
                 SET_ERROR_12V();
             else
                 CLR_ERROR_12V();
 
-            if (delta_m5v > 20)
+            if (ABS_DIFF(u_m5v, ref_m5v) > 20)
                 SET_ERROR_M5V();
             else
                 CLR_ERROR_M5V();
@@ -307,8 +245,7 @@ int main(void)
                     I_setpoint = usRegHoldingBuf[HREG_OPERATING_I];
                 else
                     I_setpoint = usRegHoldingBuf[HREG_STANDBY_I];
-                uint16_t delta_I = (I_cur >= I_setpoint) ? (I_cur - I_setpoint) : (I_setpoint - I_cur);
-                if (delta_I > usRegHoldingBuf[HREG_ACCURACY]) {
+                if (ABS_DIFF(I_cur, I_setpoint) > usRegHoldingBuf[HREG_ACCURACY]) {
                     Set_I(I_setpoint);
                 }
             }
@@ -390,7 +327,7 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 void DAC_SetVoltage(uint16_t voltage)
 {
-    DAC->DHR12R1 = ((uint32_t)voltage * (0xFFF + 1) / vdda) & 0xFFF;
+    DAC->DHR12R1 = (((uint32_t)voltage << 12) / vdda) & 0xFFF;
     DAC->SWTRIGR |= DAC_SWTRIGR_SWTRIG1;
 }
 void DAC_ChangeVoltage(void)
@@ -416,13 +353,14 @@ void DAC_StartChangingV(void)
     TIM6->SR &= ~TIM_SR_UIF;
     TIM6->CR1 |= TIM_CR1_CEN;
 }
+
 uint16_t ADC_ReadChannel(uint8_t channel)
 {
     ADC1->SQR3 = channel;
     ADC1->CR2 |= ADC_CR2_SWSTART;
     while (!(ADC1->SR & ADC_SR_EOC))
         ;
-    uint16_t a = ADC1->DR;
+    uint16_t a = ((uint32_t)ADC1->DR * vdda) >> 12;
     ADC1->SR = 0;
     return a;
 }
@@ -430,7 +368,11 @@ void MeasureVref(void)
 {
     ADC1->DR;
     ADC1->SR = 0;
-    uint16_t raw_vrefint = ADC_ReadChannel(17);
+    ADC1->SQR3 = 17;
+    ADC1->CR2 |= ADC_CR2_SWSTART;
+    while (!(ADC1->SR & ADC_SR_EOC))
+        ;
+    uint16_t raw_vrefint = ADC1->DR;
     vdda = (3300 * *(uint16_t *)VREFINT_CAL_ADDR) / raw_vrefint;
     ADC1->SR = 0;
 }
@@ -485,7 +427,7 @@ void Calibration(void)
         uint16_t u_mes = ADC_ReadChannel(0);
 
         c_a[c_index] = (uint16_t)(((uint32_t)usRegHoldingBuf[IREG_OSCILLOSCOPE_I] << Q12_SHIFT) /
-                                  (vdda * usRegHoldingBuf[HREG_CALIB_VALUE] / (0xFFF + 1)));
+                                  (((uint32_t)vdda * usRegHoldingBuf[HREG_CALIB_VALUE]) >> 12));
         c_b[c_index] = (uint16_t)(((uint32_t)usRegHoldingBuf[IREG_OSCILLOSCOPE_I] << Q12_SHIFT) / u_mes);
 
         uint16_t scaled_c_a = (uint16_t)((((uint32_t)c_a[c_index] * 1000) + Q12_HALF) >> Q12_SHIFT);
@@ -500,7 +442,7 @@ void Calibration(void)
         usRegInputBuf[IREG_OSCILLOSCOPE_I] = MIN_I + c_index * ((MAX_I - MIN_I) / N_SEGMENTS);
     }
     if (c_index == N_SEGMENTS + 1 || !CHECK_SET_CALIB_MODE()) {
-        TIM6->ARR = 714;
+        TIM6->ARR = 500;
         c_index = 0;
         CLR_CALIB_MODE();
         CLR_CALIB_MODE_IN_PR();
@@ -537,9 +479,6 @@ void Change_I(void)
     uint16_t coef_b = Get_c_b_by_U_mes(U_mes);
     uint16_t I_cur = (uint16_t)(((uint32_t)U_mes * coef_b) >> Q12_SHIFT);
     uint16_t coef_a = Get_c_a_by_I(I_cur);
-
-    usRegInputBuf[IREG_I_CURRENT] = I_cur;
-    usRegInputBuf[IREG_U_MES] = U_mes;
 
     uint16_t I_set_cur_local;
     if (CHECK_SET_OPERATING_MODE())
@@ -591,11 +530,7 @@ uint16_t Get_c_a_by_I(uint16_t i)
     if (i >= MAX_I)
         return (c_a[N_SEGMENTS - 1] != 0) ? c_a[N_SEGMENTS - 1] : default_val;
 
-    uint32_t denom = (uint32_t)MAX_I - (uint32_t)MIN_I + 1U;
-    if (denom == 0)
-        return default_val;
-
-    uint32_t idx = ((uint32_t)(i - MIN_I) * (uint32_t)N_SEGMENTS) / denom;
+    uint32_t idx = ((uint32_t)(i - MIN_I) * (uint32_t)N_SEGMENTS) / (MAX_I - MIN_I + 1);
     if (idx >= (uint32_t)N_SEGMENTS)
         idx = N_SEGMENTS - 1;
 
@@ -618,7 +553,7 @@ uint16_t Get_c_b_by_U_mes(uint16_t u)
     if (denom == 0)
         return default_val;
 
-    uint32_t idx = ((uint32_t)(u - MIN_U) * (uint32_t)N_SEGMENTS) / denom;
+    uint32_t idx = ((uint32_t)(u - MIN_U) * (uint32_t)N_SEGMENTS) / (MAX_U - MIN_U + 1);
     if (idx >= (uint32_t)N_SEGMENTS)
         idx = N_SEGMENTS - 1;
 
@@ -705,7 +640,40 @@ void Coils_ApplyToPins(void)
     else
         GPIOB->BSRR = (1 << (CONVERTER_PIN + 16));
 }
-
+void HandleModbusRequest(uint8_t *RxBuf)
+{
+    if (RxBuf[0] == SLAVE_ID) {
+        switch (RxBuf[1]) {
+            case 0x03:
+                readHoldingRegs();
+                break;
+            case 0x04:
+                readInputRegs();
+                break;
+            case 0x01:
+                readCoils();
+                break;
+            case 0x02:
+                readInputs();
+                break;
+            case 0x06:
+                writeSingleReg();
+                break;
+            case 0x10:
+                writeHoldingRegs();
+                break;
+            case 0x05:
+                writeSingleCoil();
+                break;
+            case 0x0F:
+                writeMultiCoils();
+                break;
+            default:
+                modbusException(ILLEGAL_FUNCTION);
+                break;
+        }
+    }
+}
 /* USER CODE END 4 */
 
 /**

@@ -50,6 +50,11 @@ extern "C" {
 #define UART5_RX_BUF_SIZE 256
 #define UART5_TX_BUF_SIZE 256
 
+// ОПТИМИЗАЦИЯ: Можно добавить предвычисленные константы для диапазонов.
+// #define I_RANGE (MAX_I - MIN_I + 1)  // = 25001, используется в Get_c_a_by_I()
+// #define U_RANGE (MAX_U - MIN_U + 1)  // = 3001, используется в Get_c_b_by_U_mes()
+// Экономия: ~10-16 тактов на каждый вызов функций (2 функции вызываются часто).
+// Обоснование: Избежать вычисления константы во время выполнения.
 #define N_SEGMENTS 10 // кол-во коэф (частей, на которые мы делим ось U графика I(U))
 #define MIN_I 0
 #define MAX_I 25000 // мА
@@ -89,7 +94,11 @@ extern "C" {
 #define DISCRETE_BIT_ERROR_12V 6
 #define DISCRETE_BIT_ERROR_M5V 7
 
-// Проверка битов
+// ОПТИМИЗАЦИЯ: Макросы CHECK можно упростить, используя прямую проверку бита.
+// Вместо ((buf >> bit) & 1) можно использовать (buf & (1 << bit)) - без сдвига.
+// Экономия: ~1-2 такта на вызов (сдвиг + AND vs только AND), но результат != 0/1.
+// Обоснование: Если результат используется только в if(), достаточно проверки на != 0.
+// Однако текущий вариант возвращает 0/1, что удобнее. Оптимизация минимальна.
 #define CHECK_CUR_SETTING() ((usDiscreteBuf[0] >> DISCRETE_BIT_CUR_SETTING) & 0x01)
 #define CHECK_SOURCE_STATUS() ((usDiscreteBuf[0] >> DISCRETE_BIT_SOURCE_STATUS) & 0x01)
 #define CHECK_CONVERTER_STATUS() ((usDiscreteBuf[0] >> DISCRETE_BIT_CONVERTER_STATUS) & 0x01)
@@ -186,6 +195,12 @@ extern "C" {
 #define COEF_A_DEFAULT 6     // c_a по умолчанию (без сдвига)
 #define COEF_B_DEFAULT 7     // c_b по умолчанию (без сдвига)
 #define LOOP_UPDATE_PERIOD_MS 150
+
+// ============================================================================
+// Вспомогательные макросы
+// ============================================================================
+#define ABS_DIFF(a, b) ((a) > (b) ? (a) - (b) : (b) - (a))
+
 /* USER CODE END EM */
 
 /* Exported functions prototypes ---------------------------------------------*/
