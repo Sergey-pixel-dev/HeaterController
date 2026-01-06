@@ -18,6 +18,8 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "eeprom.h"
+#include "i2c.h"
 #include "init.h"
 #include "modbusSlave.h"
 /* Private includes ----------------------------------------------------------*/
@@ -66,6 +68,10 @@ uint16_t delta_u;
 uint16_t i_set_cur;
 
 uint32_t last_tick = 0;
+
+uint8_t buf[16];
+
+EEPROM_t eeprom = {0x50, 256, 8, 1, 32, I2C_MEMADD_SIZE_8BIT};
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -140,6 +146,7 @@ int main(void)
     UART_Init();
     MODBUS_Timer_Init();
     TIM6_Init();
+    I2C1_Init(I2C_SPEED_STANDARD);
     DMA1_Stream0->CR |= DMA_SxCR_EN;
     MeasureVref();
 
@@ -162,6 +169,18 @@ int main(void)
 
     /* Infinite loop */
     /* USER CODE BEGIN WHILE */
+    for (uint8_t i = 0; i < 10; i++) {
+        buf[i] = i + 1;
+    }
+    EEPROM_Write(&eeprom, 0, buf, 10, 100);
+    HAL_Delay(100);
+    while (1) {
+
+        EEPROM_Status_t a = EEPROM_Read(&eeprom, 0, buf, 13, 100);
+        if (a)
+            usDiscreteBuf[0] = 1;
+        HAL_Delay(1000);
+    }
     while (1) {
 
         /* USER CODE END WHILE */

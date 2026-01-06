@@ -51,6 +51,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/Core/Src/modbusSlave.c
     ${CMAKE_SOURCE_DIR}/Core/Src/modbus_crc.c
     ${CMAKE_SOURCE_DIR}/Core/Src/init.c
+    ${CMAKE_SOURCE_DIR}/Core/Src/i2c.c
+    ${CMAKE_SOURCE_DIR}/Core/Src/eeprom.c
 )
 
 # Add include paths
