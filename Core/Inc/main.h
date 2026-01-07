@@ -50,16 +50,11 @@ extern "C" {
 #define UART5_RX_BUF_SIZE 256
 #define UART5_TX_BUF_SIZE 256
 
-// ОПТИМИЗАЦИЯ: Можно добавить предвычисленные константы для диапазонов.
-// #define I_RANGE (MAX_I - MIN_I + 1)  // = 25001, используется в Get_c_a_by_I()
-// #define U_RANGE (MAX_U - MIN_U + 1)  // = 3001, используется в Get_c_b_by_U_mes()
-// Экономия: ~10-16 тактов на каждый вызов функций (2 функции вызываются часто).
-// Обоснование: Избежать вычисления константы во время выполнения.
-#define N_SEGMENTS 10 // кол-во коэф (частей, на которые мы делим ось U графика I(U))
+#define N_SEGMENTS 6 // кол-во коэф (частей, на которые мы делим ось U графика I(U))
 #define MIN_I 0
-#define MAX_I 25000 // мА
+#define MAX_I 30000 // мА
 #define MIN_U 0
-#define MAX_U 3000
+#define MAX_U 3300
 #define MAX_DAC_VOLTAGE 3300 // VDDA в мВ
 
 #define N_TIMERS 7 // Кол-во интервалов в 1 сек
@@ -94,16 +89,14 @@ extern "C" {
 #define DISCRETE_BIT_ERROR_12V 6
 #define DISCRETE_BIT_ERROR_M5V 7
 
-// ОПТИМИЗАЦИЯ: Макросы CHECK можно упростить, используя прямую проверку бита.
-// Вместо ((buf >> bit) & 1) можно использовать (buf & (1 << bit)) - без сдвига.
-// Экономия: ~1-2 такта на вызов (сдвиг + AND vs только AND), но результат != 0/1.
-// Обоснование: Если результат используется только в if(), достаточно проверки на != 0.
-// Однако текущий вариант возвращает 0/1, что удобнее. Оптимизация минимальна.
 #define CHECK_CUR_SETTING() ((usDiscreteBuf[0] >> DISCRETE_BIT_CUR_SETTING) & 0x01)
 #define CHECK_SOURCE_STATUS() ((usDiscreteBuf[0] >> DISCRETE_BIT_SOURCE_STATUS) & 0x01)
 #define CHECK_CONVERTER_STATUS() ((usDiscreteBuf[0] >> DISCRETE_BIT_CONVERTER_STATUS) & 0x01)
 #define CHECK_CALIB_IN_PR() ((usDiscreteBuf[0] >> DISCRETE_BIT_CALIB_IN_PR) & 0x01)
 #define CHECK_JMPR_STATUS() ((usDiscreteBuf[0] >> DISCRETE_BIT_JMPR_STATUS) & 0x01)
+#define CHECK_ERROR_27V() ((usDiscreteBuf[0] >> DISCRETE_BIT_ERROR_27V) & 0x01)
+#define CHECK_ERROR_12V() ((usDiscreteBuf[0] >> DISCRETE_BIT_ERROR_12V) & 0x01)
+#define CHECK_ERROR_M5V() ((usDiscreteBuf[0] >> DISCRETE_BIT_ERROR_M5V) & 0x01)
 
 // Установка/сброс битов
 #define SET_CUR_SETTING() (usDiscreteBuf[0] |= (1U << DISCRETE_BIT_CUR_SETTING))
@@ -242,7 +235,6 @@ extern uint8_t TxBufferUART4[UART4_TX_BUF_SIZE];
 
 extern uint16_t c_a[N_SEGMENTS];
 extern uint16_t c_b[N_SEGMENTS];
-extern uint16_t c_c[N_SEGMENTS];
 extern uint16_t c_d;
 extern uint16_t i_e;
 extern uint16_t c_index;
@@ -251,6 +243,8 @@ extern uint16_t delta_u;
 extern uint16_t i_set_cur;
 
 extern uint32_t last_tick;
+
+typedef enum { INFO = 0x01, WARN = 0x02, ERR = 0x03 } LogType_t;
 
 /* USER CODE END Private defines */
 

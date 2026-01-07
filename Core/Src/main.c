@@ -22,6 +22,7 @@
 #include "i2c.h"
 #include "init.h"
 #include "modbusSlave.h"
+#include "stm32f4xx_hal.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 /* USER CODE END Includes */
@@ -60,7 +61,6 @@ uint8_t TxBufferUART4[UART4_TX_BUF_SIZE];
 
 uint16_t c_a[N_SEGMENTS];
 uint16_t c_b[N_SEGMENTS];
-uint16_t c_c[N_SEGMENTS];
 uint16_t c_d;
 uint16_t i_e;
 uint16_t c_index = 0;
@@ -68,8 +68,16 @@ uint16_t delta_u;
 uint16_t i_set_cur;
 
 uint32_t last_tick = 0;
+uint32_t last_tick_second = 0;
 
-uint8_t buf[16];
+uint8_t buf1[256];
+uint8_t buf2[256];
+
+// Статистика
+uint32_t modbus_req_count = 0;
+uint32_t work_time = 0;
+uint8_t log_count = 0;
+uint8_t log_i = 0;
 
 EEPROM_t eeprom = {0x50, 256, 8, 1, 32, I2C_MEMADD_SIZE_8BIT};
 /* USER CODE END PV */
@@ -100,7 +108,7 @@ void HandleModbusRequest(uint8_t *RxBuf);
 void TIM6_Init(void);
 uint16_t Get_c_a_by_I(uint16_t i);
 uint16_t Get_c_b_by_U_mes(uint16_t u);
-
+void WriteLog(LogType_t type, uint8_t subtype, uint8_t code);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -164,23 +172,61 @@ int main(void)
 
     Coils_ApplyToPins();
     last_tick = HAL_GetTick();
-
+    last_tick_second = HAL_GetTick();
+    // Структура хранения. [] - это 1 байт. Наименее значимый байт хранится по меньшему адресу.
+    // [кол-во коэф.] (сначала c_a) [Младший байт коэф. 1][Старший байт коэф. 1][Младший байт коэф. 2][Старший байт
+    // коэф. 2]...
+    // ...[Младший байт коэф. 15][Старший байт коэф. 15](потом c_b) [Младший байт коэф. 1][Старший байт коэф. 1][Младший
+    // байт коэф. 2][Старший байт коэф. 2]...
+    // ... [Младший байт коэф. 15][Старший байт коэф. 15] [][][] - 3 байта для выравнивания по странице
+    // --- 64 БАЙТА ЗАПИСАНЫ ---
+    // Далее идут 64 байта статистики, пока запишем так:
+    // [время работы][время работы][время работы][время работы](4 байта времени работы в сек.)
+    // [кол-во модбас обращений][кол-во модбас обращений][кол-во модбас обращений][кол-во модбас обращений]
+    // Далее идут 56 пока пустых байтов
+    // --- 128 БАЙТОВ ЗАПИСАНЫ ---
+    // Сначала 1 байт хранит кол-во записей в данной сессии (ВСЕ ЗАПИСИ ОЧИЩАЮТСЯ ПЕРЕД НОВЫМ ЗАПУСКОМ)
+    // [кол-во записей]
+    // Далее идут байты записи (5 байт), структура записи:
+    // [байт тик][байт тик][байт тик][байт тик](32-битный тик с момента запуска контролллера)
+    // [AA, BB, CCCC], где AA 01 - INFO, 10 - WARNING, 11 - ERROR. BB - код раздела (типа для разделения), CCCC - код
+    // записи.
+    // для 256 x 8 eeprom кол-во записей макс - 25.
     /* USER CODE END 2 */
 
     /* Infinite loop */
     /* USER CODE BEGIN WHILE */
-    for (uint8_t i = 0; i < 10; i++) {
-        buf[i] = i + 1;
-    }
-    EEPROM_Write(&eeprom, 0, buf, 10, 100);
-    HAL_Delay(100);
-    while (1) {
+    // Очищаем записи
 
-        EEPROM_Status_t a = EEPROM_Read(&eeprom, 0, buf, 13, 100);
-        if (a)
-            usDiscreteBuf[0] = 1;
-        HAL_Delay(1000);
+    EEPROM_Write(&eeprom, 128, buf1, 128, 100);
+    // Читаем коэф. с памяти
+    uint8_t c_c = 0;
+    EEPROM_Read(&eeprom, 0, &c_c, 1, 10);
+    if (c_c == N_SEGMENTS) {
+        uint8_t c_a_8[2 * N_SEGMENTS];
+        uint8_t c_b_8[2 * N_SEGMENTS];
+        EEPROM_Read(&eeprom, 1, c_a_8, N_SEGMENTS, 100);
+        EEPROM_Read(&eeprom, 31, c_b_8, N_SEGMENTS, 100);
+        for (uint8_t i = 0; i < N_SEGMENTS; i++) {
+            c_a[i] = c_a_8[i] | c_a_8[i + 1] << 8;
+            if (c_a[i] < 6 || c_a[i] > 12) // пределы уточнить
+                c_a[i] = 0;
+            c_b[i] = c_b_8[i] | c_b_8[i + 1] << 8;
+            if (c_b[i] < 6 || c_b[i] > 12) // пределы уточнить
+                c_b[i] = 0;
+        }
     }
+
+    // Читаем статистику с памяти
+    uint8_t work_time_8[4];
+    EEPROM_Read(&eeprom, 64, work_time_8, 4, 100);
+    work_time = work_time_8[0] | work_time_8[1] << 8 | work_time_8[2] << 16 | work_time_8[3] << 24;
+
+    uint8_t modbus_req_count_8[4];
+    EEPROM_Read(&eeprom, 65, modbus_req_count_8, 4, 100);
+    modbus_req_count =
+        modbus_req_count_8[0] | modbus_req_count_8[1] << 8 | modbus_req_count_8[2] << 16 | modbus_req_count_8[3] << 24;
+
     while (1) {
 
         /* USER CODE END WHILE */
@@ -243,19 +289,28 @@ int main(void)
             uint16_t ref_12v = usRegHoldingBuf[HREG_12V];
             uint16_t ref_m5v = usRegHoldingBuf[HREG_M5V];
 
-            if (ABS_DIFF(u_27v, ref_27v) > 20)
+            if (ABS_DIFF(u_27v, ref_27v) > 20) {
+                if (!CHECK_ERROR_27V())
+                    WriteLog(ERR, 1, 1);
                 SET_ERROR_27V();
-            else
+
+            } else
                 CLR_ERROR_27V();
 
-            if (ABS_DIFF(u_12v, ref_12v) > 20)
+            if (ABS_DIFF(u_12v, ref_12v) > 20) {
+                if (!CHECK_ERROR_12V())
+                    WriteLog(ERR, 1, 2);
                 SET_ERROR_12V();
-            else
+
+            } else
                 CLR_ERROR_12V();
 
-            if (ABS_DIFF(u_m5v, ref_m5v) > 20)
+            if (ABS_DIFF(u_m5v, ref_m5v) > 20) {
+                if (!CHECK_ERROR_M5V())
+                    WriteLog(ERR, 1, 3);
                 SET_ERROR_M5V();
-            else
+
+            } else
                 CLR_ERROR_M5V();
 
             if (!CHECK_CUR_SETTING() && !CHECK_CALIB_IN_PR()) {
@@ -268,6 +323,13 @@ int main(void)
                     Set_I(I_setpoint);
                 }
             }
+        }
+        if (current_tick - last_tick_second >= 1000) {
+            work_time++;
+            uint8_t work_time_8[4] = {work_time & 0x000000FF, work_time & 0x0000FF00, work_time & 0x00FF0000,
+                                      work_time & 0xFF000000};
+            EEPROM_Write(&eeprom, 64, work_time_8, 4, 100);
+            last_tick_second = current_tick;
         }
     }
     /* USER CODE END 3 */
@@ -471,6 +533,18 @@ void Calibration(void)
         usRegInputBuf[IREG_CALIB_STEP] = 0;
         usRegInputBuf[IREG_CALIB_CA] = 0;
         usRegInputBuf[IREG_CALIB_CB] = 0;
+        uint8_t c_c = N_SEGMENTS;
+        uint8_t c_a_8[2 * N_SEGMENTS];
+        uint8_t c_b_8[2 * N_SEGMENTS];
+        for (uint8_t i = 0; i < N_SEGMENTS; i++) {
+            c_a_8[i] = c_a[i] & 0xFF;
+            c_a_8[2 * i + 1] = (c_a[i] >> 8) & 0xFF;
+            c_b_8[i] = c_b[i] & 0xFF;
+            c_b_8[2 * i + 1] = (c_b[i] >> 8) & 0xFF;
+        }
+        EEPROM_Write(&eeprom, 0, &c_c, 1, 100);
+        EEPROM_Write(&eeprom, 1, c_a_8, 2 * N_SEGMENTS, 100);
+        EEPROM_Write(&eeprom, 1, c_b_8, 2 * N_SEGMENTS, 100);
     }
 }
 void Set_I(uint16_t i)
@@ -691,8 +765,29 @@ void HandleModbusRequest(uint8_t *RxBuf)
                 modbusException(ILLEGAL_FUNCTION);
                 break;
         }
+        modbus_req_count++;
+        uint8_t modbus_req_count_8[4] = {modbus_req_count & 0x000000FF, modbus_req_count & 0x0000FF00,
+                                         modbus_req_count & 0x00FF0000, modbus_req_count & 0xFF000000};
+        EEPROM_Write(&eeprom, 65, modbus_req_count_8, 4, 100);
     }
 }
+
+void WriteLog(LogType_t type, uint8_t subtype, uint8_t code)
+{
+    uint32_t tick = HAL_GetTick();
+    uint8_t full_code = type << 6 | subtype << 4 | code;
+    uint8_t log[5] = {tick & 0x000000FF, tick & 0x0000FF00, tick & 0x00FF0000, tick & 0xFF000000, full_code};
+    EEPROM_Write(&eeprom, 129 + 5 * log_i, log, 5, 100);
+    if (log_i == 24)
+        log_i = 0;
+    else
+        log_i++;
+    if (log_count != 255) {
+        log_count++;
+        EEPROM_Write(&eeprom, 128, &log_count, 1, 100);
+    }
+}
+
 /* USER CODE END 4 */
 
 /**

@@ -263,6 +263,7 @@ void EXTI15_10_IRQHandler(void)
     /* USER CODE BEGIN EXTI15_10_IRQn 0 */
     if (EXTI->PR & EXTI_PR_PR12) {
         EXTI->PR = EXTI_PR_PR12; // Сброс флага
+        Calibration();
     }
     /* USER CODE END EXTI15_10_IRQn 0 */
     // HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_12);
