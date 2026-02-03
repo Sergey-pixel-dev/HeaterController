@@ -198,7 +198,7 @@ int main(void)
     /* USER CODE BEGIN WHILE */
     // Очищаем записи
 
-    EEPROM_Write(&eeprom, 128, buf1, 128, 100);
+    /* EEPROM_Write(&eeprom, 128, buf1, 128, 100);
     // Читаем коэф. с памяти
     uint8_t c_c = 0;
     EEPROM_Read(&eeprom, 0, &c_c, 1, 10);
@@ -226,7 +226,7 @@ int main(void)
     EEPROM_Read(&eeprom, 65, modbus_req_count_8, 4, 100);
     modbus_req_count =
         modbus_req_count_8[0] | modbus_req_count_8[1] << 8 | modbus_req_count_8[2] << 16 | modbus_req_count_8[3] << 24;
-
+ */
     while (1) {
 
         /* USER CODE END WHILE */
@@ -291,7 +291,9 @@ int main(void)
 
             if (ABS_DIFF(u_27v, ref_27v) > 20) {
                 if (!CHECK_ERROR_27V())
-                    WriteLog(ERR, 1, 1);
+                    __NOP();
+
+                // WriteLog(ERR, 1, 1);
                 SET_ERROR_27V();
 
             } else
@@ -299,7 +301,8 @@ int main(void)
 
             if (ABS_DIFF(u_12v, ref_12v) > 20) {
                 if (!CHECK_ERROR_12V())
-                    WriteLog(ERR, 1, 2);
+                    __NOP();
+                // WriteLog(ERR, 1, 2);
                 SET_ERROR_12V();
 
             } else
@@ -307,7 +310,9 @@ int main(void)
 
             if (ABS_DIFF(u_m5v, ref_m5v) > 20) {
                 if (!CHECK_ERROR_M5V())
-                    WriteLog(ERR, 1, 3);
+                    __NOP();
+
+                // WriteLog(ERR, 1, 3);
                 SET_ERROR_M5V();
 
             } else
@@ -328,8 +333,9 @@ int main(void)
             work_time++;
             uint8_t work_time_8[4] = {work_time & 0x000000FF, work_time & 0x0000FF00, work_time & 0x00FF0000,
                                       work_time & 0xFF000000};
-            EEPROM_Write(&eeprom, 64, work_time_8, 4, 100);
+            // EEPROM_Write(&eeprom, 64, work_time_8, 4, 100);
             last_tick_second = current_tick;
+            // MeasureVref();
         }
     }
     /* USER CODE END 3 */
@@ -426,7 +432,7 @@ void DAC_ChangeVoltage(void)
     }
     DAC->SWTRIGR |= DAC_SWTRIGR_SWTRIG1;
 }
-void DAC_StartChangingV(void)
+void DAC_StartChangingV(void) //! вызывается просто при смене регистра, может вызваться не в режиме калибровки.
 {
     SET_CUR_SETTING();
     // Запуск TIM6
@@ -437,25 +443,51 @@ void DAC_StartChangingV(void)
 
 uint16_t ADC_ReadChannel(uint8_t channel)
 {
+    uint32_t sum = 0;
+
     ADC1->SQR3 = channel;
+
     ADC1->CR2 |= ADC_CR2_SWSTART;
     while (!(ADC1->SR & ADC_SR_EOC))
         ;
-    uint16_t a = ((uint32_t)ADC1->DR * vdda) >> 12;
+    (void)ADC1->DR;
     ADC1->SR = 0;
-    return a;
+
+    for (uint8_t i = 0; i < 60; i++) {
+        ADC1->CR2 |= ADC_CR2_SWSTART;
+        while (!(ADC1->SR & ADC_SR_EOC))
+            ;
+        sum += ADC1->DR;
+        ADC1->SR = 0;
+    }
+
+    uint16_t raw_avg = sum / 60;
+    return ((uint32_t)raw_avg * vdda) >> 12;
 }
 void MeasureVref(void)
 {
+    uint32_t sum = 0;
+
     ADC1->DR;
     ADC1->SR = 0;
     ADC1->SQR3 = 17;
+
     ADC1->CR2 |= ADC_CR2_SWSTART;
     while (!(ADC1->SR & ADC_SR_EOC))
         ;
-    uint16_t raw_vrefint = ADC1->DR;
-    vdda = (3300 * *(uint16_t *)VREFINT_CAL_ADDR) / raw_vrefint;
+    (void)ADC1->DR;
     ADC1->SR = 0;
+
+    for (uint8_t i = 0; i < 8; i++) {
+        ADC1->CR2 |= ADC_CR2_SWSTART;
+        while (!(ADC1->SR & ADC_SR_EOC))
+            ;
+        sum += ADC1->DR;
+        ADC1->SR = 0;
+    }
+
+    uint16_t raw_vrefint = sum / 8;
+    vdda = (3300UL * (*(uint16_t *)VREFINT_CAL_ADDR)) / raw_vrefint;
 }
 
 void UART4_Transmit(uint8_t *data, uint16_t size)

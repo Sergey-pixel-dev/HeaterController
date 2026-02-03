@@ -37,8 +37,12 @@ void DAC_Init(void)
 void ADC_Init(void)
 {
     RCC->APB2ENR |= RCC_APB2ENR_ADC1EN;
-    ADC->CCR |= 1 << 16; // prescaler = 4
+    ADC->CCR |= 3 << 16; // prescaler = 8
     ADC->CCR |= ADC_CCR_TSVREFE;
+
+    ADC1->SMPR2 = (7 << 0) | (7 << 3) | (7 << 6) | (7 << 9) | (7 << 12) | (7 << 15); // время выборки
+
+    ADC1->SMPR1 = (7 << 21);
     ADC1->CR2 |= ADC_CR2_EOCS;
 }
 
