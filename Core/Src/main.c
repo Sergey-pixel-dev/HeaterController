@@ -49,10 +49,12 @@ uint16_t vdda = 3300;
 uint8_t RxBufferUART5[UART5_TX_BUF_SIZE];
 uint8_t TxBufferUART5[UART5_TX_BUF_SIZE];
 uint16_t SizeRxBuf = 0;
-uint8_t uart5_event_data_ready = 0;
-uint8_t uart4_event_data_ready = 0;
 uint8_t uart5_tx_dma_busy = 0;
 uint8_t uart4_tx_dma_busy = 0;
+
+volatile uint8_t modbus_uart5_pending = 0;
+volatile uint8_t modbus_uart4_pending = 0;
+volatile uint8_t eeprom_write_pending = 0;
 
 volatile ModbusState_t modbus_state = MODBUS_IDLE;
 volatile uint16_t SizeRxBufUART4 = 0;
@@ -96,15 +98,13 @@ uint16_t ADC_ReadChannel(uint8_t channel);
 void DMA_Init(void);
 
 void UART_Init(void);
-void UART5_Transmit_DMA_Blocking(uint8_t *data, uint16_t size);
-void UART4_Transmit_DMA_Blocking(uint8_t *data, uint16_t size);
+
 void MODBUS_Timer_Init(void);
 
 void Calibration(void);
 void Set_I(uint16_t i);
 void Change_I(void);
 
-void HandleModbusRequest(uint8_t *RxBuf);
 void TIM6_Init(void);
 uint16_t Get_c_a_by_I(uint16_t i);
 uint16_t Get_c_b_by_U_mes(uint16_t u);
@@ -173,11 +173,15 @@ int main(void)
     Coils_ApplyToPins();
     last_tick = HAL_GetTick();
     last_tick_second = HAL_GetTick();
+
+    // тест.
+    c_b[0] = COEF_B_DEFAULT << Q12_SHIFT;
+
     // Структура хранения. [] - это 1 байт. Наименее значимый байт хранится по меньшему адресу.
-    // [кол-во коэф.] (сначала c_a) [Младший байт коэф. 1][Старший байт коэф. 1][Младший байт коэф. 2][Старший байт
-    // коэф. 2]...
-    // ...[Младший байт коэф. 15][Старший байт коэф. 15](потом c_b) [Младший байт коэф. 1][Старший байт коэф. 1][Младший
-    // байт коэф. 2][Старший байт коэф. 2]...
+    // [кол-во коэф.] (сначала c_a) [Младший байт коэф. 1][Старший байт коэф. 1][Младший байт коэф. 2][Старший
+    // байт коэф. 2]...
+    // ...[Младший байт коэф. 15][Старший байт коэф. 15](потом c_b) [Младший байт коэф. 1][Старший байт коэф.
+    // 1][Младший байт коэф. 2][Старший байт коэф. 2]...
     // ... [Младший байт коэф. 15][Старший байт коэф. 15] [][][] - 3 байта для выравнивания по странице
     // --- 64 БАЙТА ЗАПИСАНЫ ---
     // Далее идут 64 байта статистики, пока запишем так:
@@ -189,9 +193,8 @@ int main(void)
     // [кол-во записей]
     // Далее идут байты записи (5 байт), структура записи:
     // [байт тик][байт тик][байт тик][байт тик](32-битный тик с момента запуска контролллера)
-    // [AA, BB, CCCC], где AA 01 - INFO, 10 - WARNING, 11 - ERROR. BB - код раздела (типа для разделения), CCCC - код
-    // записи.
-    // для 256 x 8 eeprom кол-во записей макс - 25.
+    // [AA, BB, CCCC], где AA 01 - INFO, 10 - WARNING, 11 - ERROR. BB - код раздела (типа для разделения), CCCC
+    // - код записи. для 256 x 8 eeprom кол-во записей макс - 25.
     /* USER CODE END 2 */
 
     /* Infinite loop */
@@ -225,36 +228,22 @@ int main(void)
     uint8_t modbus_req_count_8[4];
     EEPROM_Read(&eeprom, 65, modbus_req_count_8, 4, 100);
     modbus_req_count =
-        modbus_req_count_8[0] | modbus_req_count_8[1] << 8 | modbus_req_count_8[2] << 16 | modbus_req_count_8[3] << 24;
+        modbus_req_count_8[0] | modbus_req_count_8[1] << 8 | modbus_req_count_8[2] << 16 |
+    modbus_req_count_8[3] << 24;
  */
     while (1) {
 
         /* USER CODE END WHILE */
 
         /* USER CODE BEGIN 3 */
-        if (uart4_event_data_ready && modbus_state == MODBUS_FRAME_COMPLETE) {
-            TransmitFuncPtr = &UART4_Transmit_DMA_Blocking;
-            RxBuffer = RxBufferUART4;
-            TxBuffer = TxBufferUART4;
-            HandleModbusRequest(RxBufferUART4);
-            SizeRxBufUART4 = 0;
-            uart4_event_data_ready = 0;
-            modbus_state = MODBUS_IDLE;
+        // Deferred EEPROM write for MODBUS statistics
+        if (eeprom_write_pending) {
+            eeprom_write_pending = 0;
+            uint8_t modbus_req_count_8[4] = {modbus_req_count & 0x000000FF, (modbus_req_count >> 8) & 0xFF,
+                                             (modbus_req_count >> 16) & 0xFF, (modbus_req_count >> 24) & 0xFF};
+            EEPROM_Write(&eeprom, 65, modbus_req_count_8, 4, 100);
         }
-        if (uart5_event_data_ready) {
-            uart5_event_data_ready = 0;
-            if (RxBufferUART5[0] == SLAVE_ID) {
-                TransmitFuncPtr = &UART5_Transmit_DMA_Blocking;
-                RxBuffer = RxBufferUART5;
-                TxBuffer = TxBufferUART5;
-                HandleModbusRequest(RxBufferUART5);
-            }
-            DMA1_Stream0->NDTR = UART5_RX_BUF_SIZE;
-            DMA1->LIFCR |= DMA_LIFCR_CTCIF0;
-            DMA1_Stream0->CR |= DMA_SxCR_EN;
-            while (!(DMA1_Stream0->CR & DMA_SxCR_EN))
-                ;
-        }
+
         uint32_t current_tick = HAL_GetTick();
         if (current_tick - last_tick >= LOOP_UPDATE_PERIOD_MS) {
             last_tick = current_tick;
@@ -443,8 +432,14 @@ void DAC_StartChangingV(void) //! вызывается просто при см�
 
 uint16_t ADC_ReadChannel(uint8_t channel)
 {
-    uint32_t sum = 0;
+    // Static buffers for sliding filter (channels 0 and 1)
+    static struct {
+        uint16_t buffer[5];
+        uint8_t index;
+        uint8_t count; // 0-5: number of valid elements
+    } ch_filters[2] = {0};
 
+    uint32_t sum = 0;
     ADC1->SQR3 = channel;
 
     ADC1->CR2 |= ADC_CR2_SWSTART;
@@ -453,7 +448,7 @@ uint16_t ADC_ReadChannel(uint8_t channel)
     (void)ADC1->DR;
     ADC1->SR = 0;
 
-    for (uint8_t i = 0; i < 60; i++) {
+    for (uint8_t i = 0; i < 10; i++) {
         ADC1->CR2 |= ADC_CR2_SWSTART;
         while (!(ADC1->SR & ADC_SR_EOC))
             ;
@@ -461,8 +456,33 @@ uint16_t ADC_ReadChannel(uint8_t channel)
         ADC1->SR = 0;
     }
 
-    uint16_t raw_avg = sum / 60;
-    return ((uint32_t)raw_avg * vdda) >> 12;
+    uint16_t raw_avg = sum / 10;
+    uint16_t mv_value = ((uint32_t)raw_avg * vdda) >> 12;
+
+    if (channel == 0 || channel == 1) {
+        uint8_t filter_idx = channel;
+
+        ch_filters[filter_idx].buffer[ch_filters[filter_idx].index] = mv_value;
+        ch_filters[filter_idx].index++;
+
+        if (ch_filters[filter_idx].index >= 5) {
+            ch_filters[filter_idx].index = 0;
+        }
+
+        if (ch_filters[filter_idx].count < 5) {
+            ch_filters[filter_idx].count++;
+        }
+
+        uint32_t filter_sum = 0;
+        for (uint8_t i = 0; i < ch_filters[filter_idx].count; i++) {
+            filter_sum += ch_filters[filter_idx].buffer[i];
+        }
+
+        return (uint16_t)(filter_sum / ch_filters[filter_idx].count);
+    }
+
+    // For channels 2-5, 17 - no filter
+    return mv_value;
 }
 void MeasureVref(void)
 {
@@ -798,9 +818,7 @@ void HandleModbusRequest(uint8_t *RxBuf)
                 break;
         }
         modbus_req_count++;
-        uint8_t modbus_req_count_8[4] = {modbus_req_count & 0x000000FF, modbus_req_count & 0x0000FF00,
-                                         modbus_req_count & 0x00FF0000, modbus_req_count & 0xFF000000};
-        EEPROM_Write(&eeprom, 65, modbus_req_count_8, 4, 100);
+        eeprom_write_pending = 1; // Deferred write
     }
 }
 

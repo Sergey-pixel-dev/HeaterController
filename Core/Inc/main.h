@@ -187,7 +187,7 @@ extern "C" {
 #define CALIB_INITIAL_I 1000 // Начальный ток для калибровки
 #define COEF_A_DEFAULT 6     // c_a по умолчанию (без сдвига)
 #define COEF_B_DEFAULT 7     // c_b по умолчанию (без сдвига)
-#define LOOP_UPDATE_PERIOD_MS 150
+#define LOOP_UPDATE_PERIOD_MS 200
 
 // ============================================================================
 // Вспомогательные макросы
@@ -201,6 +201,7 @@ void Error_Handler(void);
 
 /* USER CODE BEGIN EFP */
 extern void UART5_Transmit_DMA_Blocking(uint8_t *data, uint16_t size);
+extern void UART4_Transmit_DMA_Blocking(uint8_t *data, uint16_t size);
 extern void Calibration(void);
 extern void Change_I(void);
 extern void DAC_ChangeVoltage(void);
@@ -215,6 +216,8 @@ extern void SetCalibrationMode(void);
 extern uint16_t Calculate_I_from_U(uint16_t u_mes);
 extern uint16_t Get_c_a_by_I(uint16_t i);
 extern uint16_t Get_c_b_by_U_mes(uint16_t u);
+extern void HandleModbusRequest(uint8_t *RxBuf);
+
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
@@ -223,10 +226,12 @@ extern uint16_t Get_c_b_by_U_mes(uint16_t u);
 extern uint8_t RxBufferUART5[UART5_RX_BUF_SIZE];
 extern uint8_t TxBufferUART5[UART5_TX_BUF_SIZE];
 extern uint16_t SizeRxBuf;
-extern uint8_t uart5_event_data_ready;
-extern uint8_t uart4_event_data_ready;
 extern uint8_t uart5_tx_dma_busy;
 extern uint8_t uart4_tx_dma_busy;
+
+extern volatile uint8_t modbus_uart5_pending;
+extern volatile uint8_t modbus_uart4_pending;
+extern volatile uint8_t eeprom_write_pending;
 
 extern volatile ModbusState_t modbus_state;
 extern volatile uint16_t SizeRxBufUART4;

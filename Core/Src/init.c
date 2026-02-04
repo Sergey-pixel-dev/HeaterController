@@ -23,9 +23,9 @@ void DMA_Init(void)
 
     NVIC_SetPriority(DMA1_Stream0_IRQn, 1);
     NVIC_EnableIRQ(DMA1_Stream0_IRQn);
-    NVIC_SetPriority(DMA1_Stream7_IRQn, 1);
+    NVIC_SetPriority(DMA1_Stream7_IRQn, 3);
     NVIC_EnableIRQ(DMA1_Stream7_IRQn);
-    NVIC_SetPriority(DMA1_Stream4_IRQn, 0);
+    NVIC_SetPriority(DMA1_Stream4_IRQn, 3);
     NVIC_EnableIRQ(DMA1_Stream4_IRQn);
 }
 void DAC_Init(void)
@@ -37,7 +37,7 @@ void DAC_Init(void)
 void ADC_Init(void)
 {
     RCC->APB2ENR |= RCC_APB2ENR_ADC1EN;
-    ADC->CCR |= 3 << 16; // prescaler = 8
+    ADC->CCR |= 1 << 16; // prescaler = 4
     ADC->CCR |= ADC_CCR_TSVREFE;
 
     ADC1->SMPR2 = (7 << 0) | (7 << 3) | (7 << 6) | (7 << 9) | (7 << 12) | (7 << 15); // время выборки
@@ -54,14 +54,14 @@ void UART_Init(void)
     UART5->CR3 |= USART_CR3_DMAT | USART_CR3_DMAR;
     UART5->BRR = 0x187; // 115200, 45Мгц
 
-    NVIC_SetPriority(UART5_IRQn, 1);
+    NVIC_SetPriority(UART5_IRQn, 2);
     NVIC_EnableIRQ(UART5_IRQn);
     // UART4
     RCC->APB1ENR |= RCC_APB1ENR_UART4EN;
     UART4->BRR = 0x187;
     UART4->CR1 |= USART_CR1_UE | USART_CR1_RE | USART_CR1_TE | USART_CR1_RXNEIE;
     UART4->CR3 |= USART_CR3_DMAT;
-    NVIC_SetPriority(UART4_IRQn, 0);
+    NVIC_SetPriority(UART4_IRQn, 2);
     NVIC_EnableIRQ(UART4_IRQn);
 }
 
@@ -85,6 +85,9 @@ void MODBUS_Timer_Init(void)
     TIM3->SR &= ~TIM_SR_UIF;
     NVIC_SetPriority(TIM3_IRQn, 2);
     NVIC_EnableIRQ(TIM3_IRQn);
+
+    // Low priority for PendSV (MODBUS processing)
+    NVIC_SetPriority(PendSV_IRQn, 15);
 }
 
 void TIM6_Init(void)

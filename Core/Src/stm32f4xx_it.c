@@ -165,7 +165,30 @@ void DebugMon_Handler(void)
 void PendSV_Handler(void)
 {
     /* USER CODE BEGIN PendSV_IRQn 0 */
+    if (modbus_uart5_pending) {
+        modbus_uart5_pending = 0;
+        if (RxBufferUART5[0] == SLAVE_ID) {
+            TransmitFuncPtr = &UART5_Transmit_DMA_Blocking;
+            RxBuffer = RxBufferUART5;
+            TxBuffer = TxBufferUART5;
+            HandleModbusRequest(RxBufferUART5);
+        }
+        DMA1_Stream0->NDTR = UART5_RX_BUF_SIZE;
+        DMA1->LIFCR |= DMA_LIFCR_CTCIF0;
+        DMA1_Stream0->CR |= DMA_SxCR_EN;
+        while (!(DMA1_Stream0->CR & DMA_SxCR_EN))
+            ;
+    }
 
+    if (modbus_uart4_pending && modbus_state == MODBUS_FRAME_COMPLETE) {
+        modbus_uart4_pending = 0;
+        TransmitFuncPtr = &UART4_Transmit_DMA_Blocking;
+        RxBuffer = RxBufferUART4;
+        TxBuffer = TxBufferUART4;
+        HandleModbusRequest(RxBufferUART4);
+        SizeRxBufUART4 = 0;
+        modbus_state = MODBUS_IDLE;
+    }
     /* USER CODE END PendSV_IRQn 0 */
     /* USER CODE BEGIN PendSV_IRQn 1 */
 
@@ -201,10 +224,11 @@ void UART5_IRQHandler(void)
         UART5->SR;
         SizeRxBuf = UART5_RX_BUF_SIZE - DMA1_Stream0->NDTR;
         if (SizeRxBuf > 0) {
-            uart5_event_data_ready = 1;
             DMA1_Stream0->CR &= ~DMA_SxCR_EN;
             while (DMA1_Stream0->CR & DMA_SxCR_EN)
                 ;
+            modbus_uart5_pending = 1;
+            SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;
         }
     }
 }
@@ -243,15 +267,14 @@ void TIM3_IRQHandler(void)
 
         if (modbus_state == MODBUS_FRAME_ERROR) {
             modbus_state = MODBUS_IDLE;
-            uart4_event_data_ready = 1;
             SizeRxBufUART4 = 0;
         } else if (modbus_state == MODBUS_RECEIVING) {
             if (SizeRxBufUART4 >= 4) {
-                uart4_event_data_ready = 1;
                 modbus_state = MODBUS_FRAME_COMPLETE;
+                modbus_uart4_pending = 1;
+                SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;
             } else {
                 SizeRxBufUART4 = 0;
-                uart4_event_data_ready = 0;
                 modbus_state = MODBUS_IDLE;
             }
         }
