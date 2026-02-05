@@ -64,18 +64,18 @@ extern "C" {
 // ============================================================================
 #define SOURCE_PIN 14    // PB14 - Включение источника (выход)
 #define CONVERTER_PIN 15 // PB15 - Включение преобразователя (выход)
-#define JUMPER_PIN 0     // PB0 - Статус джампера (вход)
+#define JUMPER_PIN 4     // PB4 - Статус джампера (вход)
 #define BUTTON_PIN 13    // PB13 - Кнопка калибровки (уже настроена)
 
 #define SOURCE_STATUS_PIN 1    // PB1 - Фактическое состояние источника (вход)
 #define CONVERTER_STATUS_PIN 2 // PB2 - Фактическое состояние преобразователя (вход)
 
 // ============================================================================
-// Q4.12 Fixed Point арифметика
+// Q5.11 Fixed Point
 // ============================================================================
-#define Q12_SHIFT 12
-#define Q12_ONE (1U << Q12_SHIFT)        // 4096
-#define Q12_HALF (1U << (Q12_SHIFT - 1)) // 2048 для округления
+#define Q11_SHIFT 11
+#define Q11_ONE (1U << Q11_SHIFT)        // 2048
+#define Q11_HALF (1U << (Q11_SHIFT - 1)) // 1024 для округления
 
 // ============================================================================
 // Биты Discrete Inputs (usDiscreteBuf[0])
@@ -85,9 +85,10 @@ extern "C" {
 #define DISCRETE_BIT_CONVERTER_STATUS 2
 #define DISCRETE_BIT_CALIB_IN_PR 3
 #define DISCRETE_BIT_JMPR_STATUS 4
-#define DISCRETE_BIT_ERROR_27V 5
-#define DISCRETE_BIT_ERROR_12V 6
-#define DISCRETE_BIT_ERROR_M5V 7
+#define DISCRETE_BIT_NormalOrKZ 5 // 0 - 1 ом, 1 - КЗ
+#define DISCRETE_BIT_ERROR_27V 6
+#define DISCRETE_BIT_ERROR_12V 7
+#define DISCRETE_BIT_ERROR_M5V 8
 
 #define CHECK_CUR_SETTING() ((usDiscreteBuf[0] >> DISCRETE_BIT_CUR_SETTING) & 0x01)
 #define CHECK_SOURCE_STATUS() ((usDiscreteBuf[0] >> DISCRETE_BIT_SOURCE_STATUS) & 0x01)
@@ -113,6 +114,9 @@ extern "C" {
 
 #define SET_JMPR_STATUS() (usDiscreteBuf[0] |= (1U << DISCRETE_BIT_JMPR_STATUS))
 #define CLR_JMPR_STATUS() (usDiscreteBuf[0] &= ~(1U << DISCRETE_BIT_JMPR_STATUS))
+
+#define SET_NormalOrKZ() (usDiscreteBuf[0] |= (1U << DISCRETE_BIT_NormalOrKZ))
+#define CLR_NormalOrKZ() (usDiscreteBuf[0] &= ~(1U << DISCRETE_BIT_NormalOrKZ))
 
 #define SET_ERROR_27V() (usDiscreteBuf[0] |= (1U << DISCRETE_BIT_ERROR_27V))
 #define CLR_ERROR_27V() (usDiscreteBuf[0] &= ~(1U << DISCRETE_BIT_ERROR_27V))
@@ -161,9 +165,11 @@ extern "C" {
 #define HREG_CURRENT_SPEED 2
 #define HREG_ACCURACY 3
 #define HREG_CALIB_VALUE 4
-#define HREG_27V 5
-#define HREG_12V 6
-#define HREG_M5V 7
+#define HREG_CALIB_U 5    // Значение напряжения на выходе
+#define HREG_CALIB_I_KZ 6 // Значение тока при кз.
+#define HREG_27V 7
+#define HREG_12V 8
+#define HREG_M5V 9
 
 // ============================================================================
 // Input Registers
@@ -185,8 +191,10 @@ extern "C" {
 // Значения по умолчанию
 // ============================================================================
 #define CALIB_INITIAL_I 1000 // Начальный ток для калибровки
-#define COEF_A_DEFAULT 6     // c_a по умолчанию (без сдвига)
-#define COEF_B_DEFAULT 7     // c_b по умолчанию (без сдвига)
+#define COEF_A_DEFAULT 15    // c_a по умолчанию (без сдвига)
+#define COEF_B_DEFAULT 15    // c_b по умолчанию (без сдвига)
+#define COEF_D_DEFAULT 1     // c_d по умолчанию (без сдвига)
+#define COEF_E_DEFAULT 0     // c_e по умолчанию (без сдвига)
 #define LOOP_UPDATE_PERIOD_MS 200
 
 // ============================================================================
@@ -216,6 +224,8 @@ extern void SetCalibrationMode(void);
 extern uint16_t Calculate_I_from_U(uint16_t u_mes);
 extern uint16_t Get_c_a_by_I(uint16_t i);
 extern uint16_t Get_c_b_by_U_mes(uint16_t u);
+extern uint16_t Get_c_d_by_U(uint16_t u);
+extern uint16_t Get_c_e_by_I(uint16_t i);
 extern void HandleModbusRequest(uint8_t *RxBuf);
 
 /* USER CODE END EFP */
@@ -238,10 +248,10 @@ extern volatile uint16_t SizeRxBufUART4;
 extern uint8_t RxBufferUART4[UART4_RX_BUF_SIZE];
 extern uint8_t TxBufferUART4[UART4_TX_BUF_SIZE];
 
-extern uint16_t c_a[N_SEGMENTS];
-extern uint16_t c_b[N_SEGMENTS];
-extern uint16_t c_d;
-extern uint16_t i_e;
+extern uint16_t c_a[N_SEGMENTS]; // I  = coef_a * U_set
+extern uint16_t c_b[N_SEGMENTS]; // I = coef_b * U_mes
+extern uint16_t c_d[N_SEGMENTS]; // U_выхода = U_mes * coef_d - I * coef_e
+extern uint16_t c_e[N_SEGMENTS]; // U_выхода = U_mes * coef_d - I * coef_e
 extern uint16_t c_index;
 extern uint16_t delta_u;
 

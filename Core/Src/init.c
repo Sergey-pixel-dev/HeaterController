@@ -40,7 +40,7 @@ void ADC_Init(void)
     ADC->CCR |= 1 << 16; // prescaler = 4
     ADC->CCR |= ADC_CCR_TSVREFE;
 
-    ADC1->SMPR2 = (7 << 0) | (7 << 3) | (7 << 6) | (7 << 9) | (7 << 12) | (7 << 15); // время выборки
+    ADC1->SMPR2 = (7 << 0) | (7 << 3) | (7 << 6) | (7 << 9) | (7 << 12) | (7 << 15) | (7 << 24); // каналы 0-5, 8
 
     ADC1->SMPR1 = (7 << 21);
     ADC1->CR2 |= ADC_CR2_EOCS;
@@ -86,7 +86,6 @@ void MODBUS_Timer_Init(void)
     NVIC_SetPriority(TIM3_IRQn, 2);
     NVIC_EnableIRQ(TIM3_IRQn);
 
-    // Low priority for PendSV (MODBUS processing)
     NVIC_SetPriority(PendSV_IRQn, 15);
 }
 
@@ -111,9 +110,12 @@ void GPIO_Init(void)
     RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN | RCC_AHB1ENR_GPIOCEN | RCC_AHB1ENR_GPIODEN | RCC_AHB1ENR_GPIOBEN;
     RCC->APB2ENR |= RCC_APB2ENR_SYSCFGEN;
 
-    // PA0-PA5: ADC inputs
+    // PA0-PA3, PA5: ADC inputs; PA4: DAC output (analog mode)
     GPIOA->MODER |= GPIO_MODER_MODER0 | GPIO_MODER_MODER1 | GPIO_MODER_MODER2 | GPIO_MODER_MODER3 | GPIO_MODER_MODER4 |
                     GPIO_MODER_MODER5;
+
+    // PB0: ADC1_IN8 (analog mode)
+    GPIOB->MODER |= GPIO_MODER_MODER0;
 
     // UART5: PC12 (TX), PD2 (RX)
     GPIOC->MODER &= ~GPIO_MODER_MODER12;
@@ -138,15 +140,15 @@ void GPIO_Init(void)
     GPIOC->PUPDR &= ~GPIO_PUPDR_PUPDR11;
     GPIOC->PUPDR |= GPIO_PUPDR_PUPDR11_0;
 
-    // PB13: Button (EXTI12)
-    GPIOB->MODER &= ~(GPIO_MODER_MODER12 | GPIO_MODER_MODER13);
-    GPIOB->PUPDR &= ~(GPIO_PUPDR_PUPDR12 | GPIO_PUPDR_PUPDR13);
-    GPIOB->PUPDR |= GPIO_PUPDR_PUPDR12_0 | GPIO_PUPDR_PUPDR13_0;
-    SYSCFG->EXTICR[3] &= ~SYSCFG_EXTICR4_EXTI12;
-    SYSCFG->EXTICR[3] |= SYSCFG_EXTICR4_EXTI12_PB;
-    EXTI->IMR |= EXTI_IMR_MR12;
-    EXTI->FTSR |= EXTI_FTSR_TR12;
-    EXTI->RTSR &= ~EXTI_RTSR_TR12;
+    // PB13: Button (EXTI13, pull-up, falling edge)
+    GPIOB->MODER &= ~GPIO_MODER_MODER13;
+    GPIOB->PUPDR &= ~GPIO_PUPDR_PUPDR13;
+    GPIOB->PUPDR |= GPIO_PUPDR_PUPDR13_0;
+    SYSCFG->EXTICR[3] &= ~SYSCFG_EXTICR4_EXTI13;
+    SYSCFG->EXTICR[3] |= SYSCFG_EXTICR4_EXTI13_PB;
+    EXTI->IMR |= EXTI_IMR_MR13;
+    EXTI->FTSR |= EXTI_FTSR_TR13;
+    EXTI->RTSR &= ~EXTI_RTSR_TR13;
     NVIC_SetPriority(EXTI15_10_IRQn, 3);
     NVIC_EnableIRQ(EXTI15_10_IRQn);
 
@@ -157,10 +159,10 @@ void GPIO_Init(void)
     GPIOB->OSPEEDR |= GPIO_OSPEEDER_OSPEEDR14 | GPIO_OSPEEDER_OSPEEDR15;
     GPIOB->BSRR = (1 << (14 + 16)) | (1 << (15 + 16));
 
-    // PB0: JUMPER (input, pull-up)
-    GPIOB->MODER &= ~GPIO_MODER_MODER0;
-    GPIOB->PUPDR &= ~GPIO_PUPDR_PUPDR0;
-    GPIOB->PUPDR |= GPIO_PUPDR_PUPDR0_0;
+    // PB4: JUMPER (input, pull-up)
+    GPIOB->MODER &= ~GPIO_MODER_MODER4;
+    GPIOB->PUPDR &= ~GPIO_PUPDR_PUPDR4;
+    GPIOB->PUPDR |= GPIO_PUPDR_PUPDR4_0;
 
     // PB1, PB2: SOURCE_STATUS, CONVERTER_STATUS (inputs, pull-down)
     GPIOB->MODER &= ~(GPIO_MODER_MODER1 | GPIO_MODER_MODER2);
