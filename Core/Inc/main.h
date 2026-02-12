@@ -81,18 +81,16 @@ extern "C" {
 // Биты Discrete Inputs (usDiscreteBuf[0])
 // ============================================================================
 #define DISCRETE_BIT_CUR_SETTING 0
-#define DISCRETE_BIT_SOURCE_STATUS 1
-#define DISCRETE_BIT_CONVERTER_STATUS 2
-#define DISCRETE_BIT_CALIB_IN_PR 3
-#define DISCRETE_BIT_JMPR_STATUS 4
-#define DISCRETE_BIT_NormalOrKZ 5 // 0 - 1 ом, 1 - КЗ
-#define DISCRETE_BIT_ERROR_27V 6
-#define DISCRETE_BIT_ERROR_12V 7
-#define DISCRETE_BIT_ERROR_M5V 8
+#define DISCRETE_BIT_HEATER_STATUS 1
+#define DISCRETE_BIT_CALIB_IN_PR 2
+#define DISCRETE_BIT_JMPR_STATUS 3
+#define DISCRETE_BIT_NormalOrKZ 4 // 0 - 1 ом, 1 - КЗ
+#define DISCRETE_BIT_ERROR_27V 5
+#define DISCRETE_BIT_ERROR_12V 6
+#define DISCRETE_BIT_ERROR_M5V 7
 
 #define CHECK_CUR_SETTING() ((usDiscreteBuf[0] >> DISCRETE_BIT_CUR_SETTING) & 0x01)
-#define CHECK_SOURCE_STATUS() ((usDiscreteBuf[0] >> DISCRETE_BIT_SOURCE_STATUS) & 0x01)
-#define CHECK_CONVERTER_STATUS() ((usDiscreteBuf[0] >> DISCRETE_BIT_CONVERTER_STATUS) & 0x01)
+#define CHECK_HEATER_STATUS() 1 //((usDiscreteBuf[0] >> DISCRETE_BIT_HEATER_STATUS) & 0x01)
 #define CHECK_CALIB_IN_PR() ((usDiscreteBuf[0] >> DISCRETE_BIT_CALIB_IN_PR) & 0x01)
 #define CHECK_JMPR_STATUS() ((usDiscreteBuf[0] >> DISCRETE_BIT_JMPR_STATUS) & 0x01)
 #define CHECK_ERROR_27V() ((usDiscreteBuf[0] >> DISCRETE_BIT_ERROR_27V) & 0x01)
@@ -103,11 +101,8 @@ extern "C" {
 #define SET_CUR_SETTING() (usDiscreteBuf[0] |= (1U << DISCRETE_BIT_CUR_SETTING))
 #define CLR_CUR_SETTING() (usDiscreteBuf[0] &= ~(1U << DISCRETE_BIT_CUR_SETTING))
 
-#define SET_SOURCE_STATUS() (usDiscreteBuf[0] |= (1U << DISCRETE_BIT_SOURCE_STATUS))
-#define CLR_SOURCE_STATUS() (usDiscreteBuf[0] &= ~(1U << DISCRETE_BIT_SOURCE_STATUS))
-
-#define SET_CONVERTER_STATUS() (usDiscreteBuf[0] |= (1U << DISCRETE_BIT_CONVERTER_STATUS))
-#define CLR_CONVERTER_STATUS() (usDiscreteBuf[0] &= ~(1U << DISCRETE_BIT_CONVERTER_STATUS))
+#define SET_HEATER_STATUS() (usDiscreteBuf[0] |= (1U << DISCRETE_BIT_HEATER_STATUS))
+#define CLR_HEATER_STATUS() (usDiscreteBuf[0] &= ~(1U << DISCRETE_BIT_HEATER_STATUS))
 
 #define SET_CALIB_MODE_IN_PR() (usDiscreteBuf[0] |= (1U << DISCRETE_BIT_CALIB_IN_PR))
 #define CLR_CALIB_MODE_IN_PR() (usDiscreteBuf[0] &= ~(1U << DISCRETE_BIT_CALIB_IN_PR))
@@ -130,23 +125,18 @@ extern "C" {
 // ============================================================================
 // Coils (usCoilsBuf[0])
 // ============================================================================
-#define COIL_BIT_ENABLE_SOURCE 0
-#define COIL_BIT_ENABLE_CONVERTER 1
-#define COIL_BIT_SET_OPERATING_MODE 2
-#define COIL_BIT_SET_STANDBY_MODE 3
-#define COIL_BIT_SET_CALIB_MODE 4
+#define COIL_BIT_ENABLE_HEATER 0
+#define COIL_BIT_SET_OPERATING_MODE 1
+#define COIL_BIT_SET_STANDBY_MODE 2
+#define COIL_BIT_SET_CALIB_MODE 3
 
-#define CHECK_ENABLE_SOURCE() ((usDiscreteBuf[0] >> DISCRETE_BIT_SOURCE_STATUS) & 0x01)
-#define CHECK_ENABLE_CONVERTER() ((usDiscreteBuf[0] >> DISCRETE_BIT_CONVERTER_STATUS) & 0x01)
+#define CHECK_ENABLE_HEATER() ((usDiscreteBuf[0] >> DISCRETE_BIT_HEATER_STATUS) & 0x01)
 #define CHECK_SET_OPERATING_MODE() ((usCoilsBuf[0] >> COIL_BIT_SET_OPERATING_MODE) & 0x01)
 #define CHECK_SET_STANDBY_MODE() ((usCoilsBuf[0] >> COIL_BIT_SET_STANDBY_MODE) & 0x01)
 #define CHECK_SET_CALIB_MODE() ((usCoilsBuf[0] >> COIL_BIT_SET_CALIB_MODE) & 0x01)
 
-#define SET_ENABLE_SOURCE() (usCoilsBuf[0] |= (1U << COIL_BIT_ENABLE_SOURCE))
-#define CLR_ENABLE_SOURCE() (usCoilsBuf[0] &= ~(1U << COIL_BIT_ENABLE_SOURCE))
-
-#define SET_ENABLE_CONVERTER() (usCoilsBuf[0] |= (1U << COIL_BIT_ENABLE_CONVERTER))
-#define CLR_ENABLE_CONVERTER() (usCoilsBuf[0] &= ~(1U << COIL_BIT_ENABLE_CONVERTER))
+#define SET_ENABLE_HEATER() (usCoilsBuf[0] |= (1U << COIL_BIT_ENABLE_HEATER))
+#define CLR_ENABLE_HEATER() (usCoilsBuf[0] &= ~(1U << COIL_BIT_ENABLE_HEATER))
 
 #define SET_OPERATING_MODE() (usCoilsBuf[0] |= (1U << COIL_BIT_SET_OPERATING_MODE))
 #define CLR_OPERATING_MODE() (usCoilsBuf[0] &= ~(1U << COIL_BIT_SET_OPERATING_MODE))
@@ -178,7 +168,6 @@ extern "C" {
 #define IREG_U_SET 1
 #define IREG_U_CURRENT_MES 2
 #define IREG_U_MES 3
-#define IREG_COMPARATOR_U 4
 #define IREG_27V 5
 #define IREG_12V 6
 #define IREG_M5V 7
@@ -190,12 +179,28 @@ extern "C" {
 // ============================================================================
 // Значения по умолчанию
 // ============================================================================
-#define CALIB_INITIAL_I 1000 // Начальный ток для калибровки
+#define CALIB_INITIAL_I 2000 // Начальный ток для калибровки
 #define COEF_A_DEFAULT 15    // c_a по умолчанию (без сдвига)
 #define COEF_B_DEFAULT 15    // c_b по умолчанию (без сдвига)
 #define COEF_D_DEFAULT 1     // c_d по умолчанию (без сдвига)
 #define COEF_E_DEFAULT 0     // c_e по умолчанию (без сдвига)
 #define LOOP_UPDATE_PERIOD_MS 200
+
+// ============================================================================
+// Адреса EEPROM
+// ============================================================================
+#define EEPROM_ADDR_COEF_COUNT 0   // Кол-во коэффициентов (1 байт)
+#define EEPROM_ADDR_C_A 1          // c_a[15] (30 байт)
+#define EEPROM_ADDR_C_B 31         // c_b[15] (30 байт)
+#define EEPROM_ADDR_C_D 61         // c_d[15] (30 байт)
+#define EEPROM_ADDR_C_E 91         // c_e[15] (30 байт)
+#define EEPROM_ADDR_WORK_TIME 128  // work_time (4 байта)
+#define EEPROM_ADDR_MODBUS_CNT 132 // modbus_req_count (4 байта)
+#define EEPROM_ADDR_LOG_COUNT 136  // Кол-во записей лога (1 байт)
+#define EEPROM_ADDR_LOG_DATA 137   // Данные лога
+
+#define EEPROM_MAX_COEF 15           // Макс кол-во коэффициентов
+#define EEPROM_COEF_MAX_VALUE 0xFFFF // Макс значение коэффициента для валидации
 
 // ============================================================================
 // Вспомогательные макросы
@@ -241,7 +246,7 @@ extern uint8_t uart4_tx_dma_busy;
 
 extern volatile uint8_t modbus_uart5_pending;
 extern volatile uint8_t modbus_uart4_pending;
-extern volatile uint8_t eeprom_write_pending;
+extern volatile uint8_t eeprom_write_modbus_req_count_pending;
 
 extern volatile ModbusState_t modbus_state;
 extern volatile uint16_t SizeRxBufUART4;

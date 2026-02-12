@@ -263,7 +263,7 @@ uint8_t writeSingleCoil(void)
     else
         usCoilsBuf[word_index] &= ~(1 << bit);
 
-    if (coil_num == COIL_BIT_ENABLE_SOURCE || coil_num == COIL_BIT_ENABLE_CONVERTER) {
+    if (coil_num == COIL_BIT_ENABLE_HEATER) {
         Coils_ApplyToPins();
     } else if (coil_num == COIL_BIT_SET_OPERATING_MODE) {
         SetOperatingMode();
@@ -316,7 +316,7 @@ uint8_t writeMultiCoils(void)
         }
 
         uint16_t coil_num = (startAddr - COILS_START) + i;
-        if (coil_num == COIL_BIT_ENABLE_SOURCE || coil_num == COIL_BIT_ENABLE_CONVERTER) {
+        if (coil_num == COIL_BIT_ENABLE_HEATER) {
             need_apply_pins = 1;
         } else if (coil_num == COIL_BIT_SET_OPERATING_MODE) {
             uint8_t new_value = ((usCoilsBuf[startByte] >> bitPosition) & 0x01);

@@ -54,7 +54,8 @@ uint8_t uart4_tx_dma_busy = 0;
 
 volatile uint8_t modbus_uart5_pending = 0;
 volatile uint8_t modbus_uart4_pending = 0;
-volatile uint8_t eeprom_write_pending = 0;
+volatile uint8_t eeprom_write_modbus_req_count_pending = 0;
+volatile uint8_t eeprom_write_coef_pending = 0;
 
 volatile ModbusState_t modbus_state = MODBUS_IDLE;
 volatile uint16_t SizeRxBufUART4 = 0;
@@ -169,8 +170,6 @@ int main(void)
     usRegHoldingBuf[HREG_ACCURACY] = 50;       // Точность
 
     usCoilsBuf[0] = 0;
-    SET_ENABLE_SOURCE();
-    SET_ENABLE_CONVERTER();
     SET_STANDBY_MODE();
     SET_JMPR_STATUS();
 
@@ -179,28 +178,18 @@ int main(void)
     Coils_ApplyToPins();
     last_tick = HAL_GetTick();
     last_tick_second = HAL_GetTick();
-    DAC_SetVoltage(1);
-    for (uint8_t i = 0; i < N_SEGMENTS; i++) {
-        c_d[i] = COEF_D_DEFAULT << Q11_SHIFT;
-        c_e[i] = COEF_E_DEFAULT;
-    }
-    c_d[0] = 0x8DA6;
-    c_d[1] = 0x8C0B;
-    c_e[0] = 0x01C7;
-    c_e[1] = 0x03AA;
     // ДОБАВИЛИСЬ НОВЫЕ КОЭФ. ИСПРАВИТЬ!
     // Структура хранения. [] - это 1 байт. Наименее значимый байт хранится по меньшему адресу.
     // [кол-во коэф.] (сначала c_a) [Младший байт коэф. 1][Старший байт коэф. 1][Младший байт коэф. 2][Старший
     // байт коэф. 2]...
     // ...[Младший байт коэф. 15][Старший байт коэф. 15](потом c_b) [Младший байт коэф. 1][Старший байт коэф.
     // 1][Младший байт коэф. 2][Старший байт коэф. 2]...
-    // ... [Младший байт коэф. 15][Старший байт коэф. 15] [][][] - 3 байта для выравнивания по странице
-    // --- 64 БАЙТА ЗАПИСАНЫ ---
-    // Далее идут 64 байта статистики, пока запишем так:
+    // ... [Младший байт коэф. 15][Старший байт коэф. 15]..... []...[] - 7 байтов для выравнивания
+    // --- 128 БАЙТА ЗАПИСАНЫ ---
+    // Далее идут 8 байта статистики, пока запишем так:
     // [время работы][время работы][время работы][время работы](4 байта времени работы в сек.)
     // [кол-во модбас обращений][кол-во модбас обращений][кол-во модбас обращений][кол-во модбас обращений]
-    // Далее идут 56 пока пустых байтов
-    // --- 128 БАЙТОВ ЗАПИСАНЫ ---
+    // --- 136 БАЙТОВ ЗАПИСАНЫ ---
     // Сначала 1 байт хранит кол-во записей в данной сессии (ВСЕ ЗАПИСИ ОЧИЩАЮТСЯ ПЕРЕД НОВЫМ ЗАПУСКОМ)
     // [кол-во записей]
     // Далее идут байты записи (5 байт), структура записи:
@@ -213,48 +202,90 @@ int main(void)
     /* USER CODE BEGIN WHILE */
     // Очищаем записи
 
-    /* EEPROM_Write(&eeprom, 128, buf1, 128, 100);
-    // Читаем коэф. с памяти
+    // Очищаем записи лога (адреса 136-255)
+    EEPROM_Write(&eeprom, EEPROM_ADDR_LOG_COUNT, buf1, 120, 100);
+
+    // Читаем кол-во коэф. с памяти
     uint8_t c_c = 0;
-    EEPROM_Read(&eeprom, 0, &c_c, 1, 10);
+    EEPROM_Read(&eeprom, EEPROM_ADDR_COEF_COUNT, &c_c, 1, 10);
+
     if (c_c == N_SEGMENTS) {
         uint8_t c_a_8[2 * N_SEGMENTS];
         uint8_t c_b_8[2 * N_SEGMENTS];
-        EEPROM_Read(&eeprom, 1, c_a_8, N_SEGMENTS, 100);
-        EEPROM_Read(&eeprom, 31, c_b_8, N_SEGMENTS, 100);
+        uint8_t c_d_8[2 * N_SEGMENTS];
+        uint8_t c_e_8[2 * N_SEGMENTS];
+
+        EEPROM_Read(&eeprom, EEPROM_ADDR_C_A, c_a_8, 2 * N_SEGMENTS, 100);
+        EEPROM_Read(&eeprom, EEPROM_ADDR_C_B, c_b_8, 2 * N_SEGMENTS, 100);
+        EEPROM_Read(&eeprom, EEPROM_ADDR_C_D, c_d_8, 2 * N_SEGMENTS, 100);
+        EEPROM_Read(&eeprom, EEPROM_ADDR_C_E, c_e_8, 2 * N_SEGMENTS, 100);
+
         for (uint8_t i = 0; i < N_SEGMENTS; i++) {
-            c_a[i] = c_a_8[i] | c_a_8[i + 1] << 8;
-            if (c_a[i] < 6 || c_a[i] > 12) // пределы уточнить
-                c_a[i] = 0;
-            c_b[i] = c_b_8[i] | c_b_8[i + 1] << 8;
-            if (c_b[i] < 6 || c_b[i] > 12) // пределы уточнить
-                c_b[i] = 0;
+            c_a[i] = c_a_8[2 * i] | (c_a_8[2 * i + 1] << 8);
+            if (c_a[i] > EEPROM_COEF_MAX_VALUE)
+                c_a[i] = COEF_A_DEFAULT << Q11_SHIFT;
+
+            c_b[i] = c_b_8[2 * i] | (c_b_8[2 * i + 1] << 8);
+            if (c_b[i] > EEPROM_COEF_MAX_VALUE)
+                c_b[i] = COEF_B_DEFAULT << Q11_SHIFT;
+
+            c_d[i] = c_d_8[2 * i] | (c_d_8[2 * i + 1] << 8);
+            if (c_d[i] > EEPROM_COEF_MAX_VALUE)
+                c_d[i] = COEF_D_DEFAULT << Q11_SHIFT;
+
+            c_e[i] = c_e_8[2 * i] | (c_e_8[2 * i + 1] << 8);
+            if (c_e[i] > EEPROM_COEF_MAX_VALUE)
+                c_e[i] = COEF_E_DEFAULT;
         }
     }
 
     // Читаем статистику с памяти
     uint8_t work_time_8[4];
-    EEPROM_Read(&eeprom, 64, work_time_8, 4, 100);
-    work_time = work_time_8[0] | work_time_8[1] << 8 | work_time_8[2] << 16 | work_time_8[3] << 24;
+    EEPROM_Read(&eeprom, EEPROM_ADDR_WORK_TIME, work_time_8, 4, 100);
+    work_time = work_time_8[0] | (work_time_8[1] << 8) | (work_time_8[2] << 16) | (work_time_8[3] << 24);
 
     uint8_t modbus_req_count_8[4];
-    EEPROM_Read(&eeprom, 65, modbus_req_count_8, 4, 100);
-    modbus_req_count =
-        modbus_req_count_8[0] | modbus_req_count_8[1] << 8 | modbus_req_count_8[2] << 16 |
-    modbus_req_count_8[3] << 24;
- */
+    EEPROM_Read(&eeprom, EEPROM_ADDR_MODBUS_CNT, modbus_req_count_8, 4, 100);
+    modbus_req_count = modbus_req_count_8[0] | (modbus_req_count_8[1] << 8) | (modbus_req_count_8[2] << 16) |
+                       (modbus_req_count_8[3] << 24);
+
     while (1) {
 
         /* USER CODE END WHILE */
 
         /* USER CODE BEGIN 3 */
         // Deferred EEPROM write for MODBUS statistics
-        /* if (eeprom_write_pending) {
-            eeprom_write_pending = 0;
+        if (eeprom_write_modbus_req_count_pending) {
+            eeprom_write_modbus_req_count_pending = 0;
             uint8_t modbus_req_count_8[4] = {modbus_req_count & 0x000000FF, (modbus_req_count >> 8) & 0xFF,
                                              (modbus_req_count >> 16) & 0xFF, (modbus_req_count >> 24) & 0xFF};
-            EEPROM_Write(&eeprom, 65, modbus_req_count_8, 4, 100);
-        } */
+            EEPROM_Write(&eeprom, EEPROM_ADDR_MODBUS_CNT, modbus_req_count_8, 4, 100);
+        }
+        if (eeprom_write_coef_pending) {
+            eeprom_write_coef_pending = 0;
+            uint8_t c_c = N_SEGMENTS;
+            uint8_t c_a_8[2 * N_SEGMENTS];
+            uint8_t c_b_8[2 * N_SEGMENTS];
+            uint8_t c_d_8[2 * N_SEGMENTS];
+            uint8_t c_e_8[2 * N_SEGMENTS];
+
+            for (uint8_t i = 0; i < N_SEGMENTS; i++) {
+                c_a_8[2 * i] = c_a[i] & 0xFF;
+                c_a_8[2 * i + 1] = (c_a[i] >> 8) & 0xFF;
+                c_b_8[2 * i] = c_b[i] & 0xFF;
+                c_b_8[2 * i + 1] = (c_b[i] >> 8) & 0xFF;
+                c_d_8[2 * i] = c_d[i] & 0xFF;
+                c_d_8[2 * i + 1] = (c_d[i] >> 8) & 0xFF;
+                c_e_8[2 * i] = c_e[i] & 0xFF;
+                c_e_8[2 * i + 1] = (c_e[i] >> 8) & 0xFF;
+            }
+
+            EEPROM_Write(&eeprom, EEPROM_ADDR_COEF_COUNT, &c_c, 1, 100);
+            EEPROM_Write(&eeprom, EEPROM_ADDR_C_A, c_a_8, 2 * N_SEGMENTS, 100);
+            EEPROM_Write(&eeprom, EEPROM_ADDR_C_B, c_b_8, 2 * N_SEGMENTS, 100);
+            EEPROM_Write(&eeprom, EEPROM_ADDR_C_D, c_d_8, 2 * N_SEGMENTS, 100);
+            EEPROM_Write(&eeprom, EEPROM_ADDR_C_E, c_e_8, 2 * N_SEGMENTS, 100);
+        }
 
         uint32_t current_tick = HAL_GetTick();
         if (current_tick - last_tick >= LOOP_UPDATE_PERIOD_MS) {
@@ -262,13 +293,13 @@ int main(void)
 
             Update_Input_States();
 
-            /* uint8_t jumper_state = (GPIOB->IDR & (1 << JUMPER_PIN)) ? 1 : 0;
+            uint8_t jumper_state = (GPIOB->IDR & (1 << JUMPER_PIN)) ? 1 : 0;
             if (jumper_state != CHECK_JMPR_STATUS()) {
                 if (jumper_state)
                     SET_JMPR_STATUS();
                 else
                     CLR_JMPR_STATUS();
-            } */
+            }
 
             uint16_t u_current_mes = ADC_ReadChannel(0);
             uint16_t I_cur = Calculate_I_from_U(u_current_mes);
@@ -277,7 +308,7 @@ int main(void)
             usRegInputBuf[IREG_U_CURRENT_MES] = u_current_mes;
 
             // U_выхода = u_adc * K_u - I * K_i
-            uint16_t u_adc_raw = ADC_ReadChannel(1);
+            uint16_t u_adc_raw = ADC_ReadChannel(5);
             uint16_t K_u = Get_c_d_by_U(u_adc_raw);
             uint16_t K_i = Get_c_e_by_I(I_cur);
 
@@ -285,11 +316,10 @@ int main(void)
             uint32_t term2 = ((uint32_t)I_cur * K_i + Q11_HALF) >> Q11_SHIFT;
 
             usRegInputBuf[IREG_U_MES] = (term1 >= term2) ? (uint16_t)(term1 - term2) : 0;
-            usRegInputBuf[IREG_COMPARATOR_U] = ADC_ReadChannel(5);
 
             uint16_t u_27v = ADC_ReadChannel(2);
             uint16_t u_12v = ADC_ReadChannel(3);
-            uint16_t u_m5v = ADC_ReadChannel(8); // PB0 = ADC1_IN8
+            uint16_t u_m5v = ADC_ReadChannel(8);
 
             usRegInputBuf[IREG_27V] = u_27v;
             usRegInputBuf[IREG_12V] = u_12v;
@@ -299,35 +329,32 @@ int main(void)
             uint16_t ref_12v = usRegHoldingBuf[HREG_12V];
             uint16_t ref_m5v = usRegHoldingBuf[HREG_M5V];
 
-            /*             if (ABS_DIFF(u_27v, ref_27v) > 20) {
-                            if (!CHECK_ERROR_27V())
-                                __NOP();
+            if (ABS_DIFF(u_27v, ref_27v) > 20) {
+                if (!CHECK_ERROR_27V())
 
-                            // WriteLog(ERR, 1, 1);
-                            SET_ERROR_27V();
+                    WriteLog(ERR, 1, 1);
+                SET_ERROR_27V();
 
-                        } else
-                            CLR_ERROR_27V();
+            } else
+                CLR_ERROR_27V();
 
-                        if (ABS_DIFF(u_12v, ref_12v) > 20) {
-                            if (!CHECK_ERROR_12V())
-                                __NOP();
-                            // WriteLog(ERR, 1, 2);
-                            SET_ERROR_12V();
+            if (ABS_DIFF(u_12v, ref_12v) > 20) {
+                if (!CHECK_ERROR_12V())
+                    WriteLog(ERR, 1, 2);
+                SET_ERROR_12V();
 
-                        } else
-                            CLR_ERROR_12V();
+            } else
+                CLR_ERROR_12V();
 
-                        if (ABS_DIFF(u_m5v, ref_m5v) > 20) {
-                            if (!CHECK_ERROR_M5V())
-                                __NOP();
+            if (ABS_DIFF(u_m5v, ref_m5v) > 20) {
+                if (!CHECK_ERROR_M5V())
 
-                            // WriteLog(ERR, 1, 3);
-                            SET_ERROR_M5V();
+                    WriteLog(ERR, 1, 3);
+                SET_ERROR_M5V();
 
-                        } else
-                            CLR_ERROR_M5V();
-             */
+            } else
+                CLR_ERROR_M5V();
+
             if (!CHECK_CUR_SETTING() && !CHECK_CALIB_IN_PR()) {
                 uint16_t I_setpoint;
                 if (CHECK_SET_OPERATING_MODE())
@@ -424,7 +451,8 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 void DAC_SetVoltage(uint16_t voltage)
 {
-    DAC->DHR12R1 = (((uint32_t)voltage << 12) / vdda) & 0xFFF;
+    uint16_t dac_value = (((uint32_t)voltage << 12) / vdda) & 0xFFF;
+    DAC->DHR12R1 = dac_value > 0xFFF ? 0xFFF : dac_value;
     DAC->SWTRIGR |= DAC_SWTRIGR_SWTRIG1;
 }
 void DAC_ChangeVoltage(void)
@@ -440,57 +468,63 @@ void DAC_ChangeVoltage(void)
         TIM6->CNT = 0;
         return;
     }
+    usRegInputBuf[IREG_U_SET] = ((uint32_t)DAC->DHR12R1 * vdda) / 0xFFF;
     DAC->SWTRIGR |= DAC_SWTRIGR_SWTRIG1;
 }
-void DAC_StartChangingV(void) //! вызывается просто при смене регистра, может вызваться не в режиме калибровки.
-{                             // даже если уже устаналвивается, все равно вызовется
-    SET_CUR_SETTING();
-    // Запуск TIM6
-    TIM6->CNT = 0;
-    TIM6->SR &= ~TIM_SR_UIF;
-    TIM6->CR1 |= TIM_CR1_CEN;
+void DAC_StartChangingV(void)
+{
+    if (CHECK_CALIB_IN_PR() && !CHECK_CUR_SETTING()) {
+        SET_CUR_SETTING();
+        // Запуск TIM6
+        TIM6->CNT = 0;
+        TIM6->SR &= ~TIM_SR_UIF;
+        TIM6->CR1 |= TIM_CR1_CEN;
+    }
 }
 
 uint16_t ADC_ReadChannel(uint8_t channel)
 {
-    // Static buffers for sliding filter (channels 0 and 1)
     static struct {
-        uint16_t buffer[5];
+        uint16_t buffer[10];
         uint8_t index;
-        uint8_t count; // 0-5: number of valid elements
+        uint8_t count;
     } ch_filters[2] = {0};
 
     uint32_t sum = 0;
     ADC1->SQR3 = channel;
+    uint32_t tick = HAL_GetTick();
 
     ADC1->CR2 |= ADC_CR2_SWSTART;
     while (!(ADC1->SR & ADC_SR_EOC))
-        ;
+        if (tick - HAL_GetTick() >= 5)
+            break;
     (void)ADC1->DR;
     ADC1->SR = 0;
-
-    for (uint8_t i = 0; i < 10; i++) {
+    tick = HAL_GetTick();
+    for (uint8_t i = 0; i < 60; i++) {
         ADC1->CR2 |= ADC_CR2_SWSTART;
         while (!(ADC1->SR & ADC_SR_EOC))
-            ;
+            if (tick - HAL_GetTick() >= 5)
+                break;
+
         sum += ADC1->DR;
         ADC1->SR = 0;
     }
 
-    uint16_t raw_avg = sum / 10;
+    uint16_t raw_avg = sum / 60;
     uint16_t mv_value = ((uint32_t)raw_avg * vdda) >> 12;
 
-    if (channel == 0 || channel == 1) {
-        uint8_t filter_idx = channel;
+    if (channel == 0 || channel == 5) { // пока для U_cur_mes и U_mes
+        uint8_t filter_idx = channel == 0 ? 0 : 1;
 
         ch_filters[filter_idx].buffer[ch_filters[filter_idx].index] = mv_value;
         ch_filters[filter_idx].index++;
 
-        if (ch_filters[filter_idx].index >= 5) {
+        if (ch_filters[filter_idx].index >= 10) {
             ch_filters[filter_idx].index = 0;
         }
 
-        if (ch_filters[filter_idx].count < 5) {
+        if (ch_filters[filter_idx].count < 10) {
             ch_filters[filter_idx].count++;
         }
 
@@ -502,7 +536,6 @@ uint16_t ADC_ReadChannel(uint8_t channel)
         return (uint16_t)(filter_sum / ch_filters[filter_idx].count);
     }
 
-    // For channels 2-5, 17 - no filter
     return mv_value;
 }
 void MeasureVref(void)
@@ -580,26 +613,21 @@ void Calibration(void)
     static uint16_t u_cur_mes;
     static uint16_t u_mes_kz;
     static uint16_t u_mes;
-    if (CHECK_CALIB_IN_PR() && (c_index <= N_SEGMENTS)) { //&& !CHECK_CUR_SETTING()) {
+    if (CHECK_CALIB_IN_PR() && (c_index <= N_SEGMENTS)) {
         if (!NormalOrKZ) {
             u_cur_mes = ADC_ReadChannel(0);
-            u_mes = ADC_ReadChannel(1);
+            u_mes = ADC_ReadChannel(5);
+            uint16_t calib_value = usRegHoldingBuf[HREG_CALIB_VALUE] == 0 ? 1 : usRegHoldingBuf[HREG_CALIB_VALUE];
+            u_cur_mes = u_cur_mes == 0 ? 1 : u_cur_mes;
             c_a[c_index] = (uint16_t)(((uint32_t)usRegInputBuf[IREG_OSCILLOSCOPE_I] << Q11_SHIFT) /
-                                      (((uint32_t)vdda * usRegHoldingBuf[HREG_CALIB_VALUE]) >> 11));
+                                      (((uint32_t)vdda * calib_value) >> 11));
             c_b[c_index] = (uint16_t)(((uint32_t)usRegInputBuf[IREG_OSCILLOSCOPE_I] << Q11_SHIFT) / u_cur_mes);
-
-            uint16_t scaled_c_a = (uint16_t)((((uint32_t)c_a[c_index] * 1000) + Q11_HALF) >> Q11_SHIFT);
-            uint16_t scaled_c_b = (uint16_t)((((uint32_t)c_b[c_index] * 1000) + Q11_HALF) >> Q11_SHIFT);
-
-            usRegInputBuf[IREG_CALIB_STEP] = c_index + 1;
-            usRegInputBuf[IREG_CALIB_CA] = scaled_c_a;
-            usRegInputBuf[IREG_CALIB_CB] = scaled_c_b;
 
             SET_NormalOrKZ();
             NormalOrKZ = 1;
 
         } else {
-            u_mes_kz = ADC_ReadChannel(1);
+            u_mes_kz = ADC_ReadChannel(5);
 
             uint16_t I_osc = usRegInputBuf[IREG_OSCILLOSCOPE_I];
             uint16_t I_kz = usRegHoldingBuf[HREG_CALIB_I_KZ];
@@ -612,8 +640,10 @@ void Calibration(void)
             uint32_t ratio_q11 = ((uint32_t)I_osc << Q11_SHIFT) / I_kz;
             uint32_t subtract_term = (ratio_q11 * u_mes_kz) >> Q11_SHIFT;
 
-            int32_t denom = (int32_t)u_mes - (int32_t)subtract_term;
-            if (denom <= 0)
+            uint32_t denom;
+            if (u_mes > subtract_term)
+                denom = u_mes - subtract_term;
+            else
                 denom = 1;
 
             c_d[c_index] = (uint16_t)(((uint32_t)U_calib << Q11_SHIFT) / (uint32_t)denom);
@@ -637,13 +667,13 @@ void Calibration(void)
             usRegHoldingBuf[HREG_CALIB_I_KZ] = 0;
             usRegHoldingBuf[HREG_CALIB_VALUE] = 0;
             c_index++;
+            usRegInputBuf[IREG_CALIB_STEP] = c_index;
             usRegInputBuf[IREG_OSCILLOSCOPE_I] = MIN_I + c_index * ((MAX_I - MIN_I) / N_SEGMENTS);
         }
     }
-    if (c_index == N_SEGMENTS + 1 ||
-        !CHECK_SET_CALIB_MODE()) { // зайдет сюда, даже если не был в режиме калибровки а просто нажал кнопку
+    if (c_index == N_SEGMENTS + 1 || !CHECK_SET_CALIB_MODE()) {
         NormalOrKZ = 0;
-        TIM6->ARR = 500;
+        TIM6->ARR = 9183;
         c_index = 0;
         CLR_CALIB_MODE();
         CLR_CALIB_MODE_IN_PR();
@@ -653,18 +683,7 @@ void Calibration(void)
         usRegInputBuf[IREG_CALIB_STEP] = 0;
         usRegInputBuf[IREG_CALIB_CA] = 0;
         usRegInputBuf[IREG_CALIB_CB] = 0;
-        uint8_t c_c = N_SEGMENTS;
-        uint8_t c_a_8[2 * N_SEGMENTS];
-        uint8_t c_b_8[2 * N_SEGMENTS];
-        for (uint8_t i = 0; i < N_SEGMENTS; i++) {
-            c_a_8[i] = c_a[i] & 0xFF;
-            c_a_8[2 * i + 1] = (c_a[i] >> 8) & 0xFF;
-            c_b_8[i] = c_b[i] & 0xFF;
-            c_b_8[2 * i + 1] = (c_b[i] >> 8) & 0xFF;
-        }
-        // EEPROM_Write(&eeprom, 0, &c_c, 1, 100);
-        // EEPROM_Write(&eeprom, 1, c_a_8, 2 * N_SEGMENTS, 100);
-        // EEPROM_Write(&eeprom, 1, c_b_8, 2 * N_SEGMENTS, 100);
+        eeprom_write_coef_pending = 1;
     }
 }
 void Set_I(uint16_t i)
@@ -685,8 +704,8 @@ void StopChange_I(void)
 }
 void Change_I(void)
 {
-    // if (!(CHECK_CONVERTER_STATUS() && CHECK_SOURCE_STATUS()))
-    //    return;
+    if (!CHECK_HEATER_STATUS())
+        return;
 
     uint16_t U_mes = ADC_ReadChannel(0);
     uint16_t coef_b = Get_c_b_by_U_mes(U_mes);
@@ -719,14 +738,10 @@ void Change_I(void)
     }
 
     uint16_t new_voltage;
-    if (I_cur < I_set_cur_local) {
+    if (I_cur < I_set_cur_local)
         new_voltage = usRegInputBuf[IREG_U_SET] + delta_U;
-    } else {
-        new_voltage = usRegInputBuf[IREG_U_SET] - delta_U;
-    }
-
-    if (new_voltage > MAX_U)
-        new_voltage = MAX_U;
+    else
+        new_voltage = usRegInputBuf[IREG_U_SET] - delta_U <= 0 ? 0 : usRegInputBuf[IREG_U_SET] - delta_U;
 
     DAC_SetVoltage(new_voltage);
     usRegInputBuf[IREG_U_SET] = new_voltage;
@@ -817,19 +832,11 @@ uint16_t Get_c_e_by_I(uint16_t i)
 void Update_Input_States(void)
 {
     uint8_t source_state = (GPIOB->IDR & (1 << SOURCE_STATUS_PIN)) ? 1 : 0;
-    if (source_state != CHECK_SOURCE_STATUS()) {
+    if (source_state != CHECK_HEATER_STATUS()) {
         if (source_state)
-            SET_SOURCE_STATUS();
+            SET_HEATER_STATUS();
         else
-            CLR_SOURCE_STATUS();
-    }
-
-    uint8_t converter_state = (GPIOB->IDR & (1 << CONVERTER_STATUS_PIN)) ? 1 : 0;
-    if (converter_state != CHECK_CONVERTER_STATUS()) {
-        if (converter_state)
-            SET_CONVERTER_STATUS();
-        else
-            CLR_CONVERTER_STATUS();
+            CLR_HEATER_STATUS();
     }
 }
 
@@ -841,6 +848,7 @@ void SetOperatingMode(void)
     } else if (CHECK_SET_STANDBY_MODE()) {
         CLR_STANDBY_MODE();
     }
+    SET_OPERATING_MODE();
 }
 
 void SetStandbyMode(void)
@@ -851,42 +859,33 @@ void SetStandbyMode(void)
     } else if (CHECK_SET_OPERATING_MODE()) {
         CLR_OPERATING_MODE();
     }
+    SET_STANDBY_MODE();
 }
 
 void SetCalibrationMode(void)
 {
-    // Проверка джампера - калибровка запрещена если джампер установлен
     if (CHECK_JMPR_STATUS()) {
         CLR_CALIB_MODE();
         return;
     }
 
-    // Выход из текущего режима
     if (CHECK_SET_STANDBY_MODE()) {
         CLR_STANDBY_MODE();
     } else if (CHECK_SET_OPERATING_MODE()) {
         CLR_OPERATING_MODE();
     }
 
-    // Вход в режим калибровки
-    if (!CHECK_JMPR_STATUS()) {
-        usRegInputBuf[IREG_OSCILLOSCOPE_I] = CALIB_INITIAL_I;
-        TIM6->ARR = 500;
-        SET_CALIB_MODE_IN_PR();
-    }
+    usRegInputBuf[IREG_OSCILLOSCOPE_I] = CALIB_INITIAL_I;
+    TIM6->ARR = 6419; // 10 Гц заместо 7 Гц
+    SET_CALIB_MODE_IN_PR();
 }
 
 void Coils_ApplyToPins(void)
 {
-    if (CHECK_ENABLE_SOURCE())
+    if (!CHECK_ENABLE_HEATER())
         GPIOB->BSRR = (1 << SOURCE_PIN);
     else
         GPIOB->BSRR = (1 << (SOURCE_PIN + 16));
-
-    if (CHECK_ENABLE_CONVERTER())
-        GPIOB->BSRR = (1 << CONVERTER_PIN);
-    else
-        GPIOB->BSRR = (1 << (CONVERTER_PIN + 16));
 }
 void HandleModbusRequest(uint8_t *RxBuf)
 {
@@ -921,7 +920,7 @@ void HandleModbusRequest(uint8_t *RxBuf)
                 break;
         }
         modbus_req_count++;
-        eeprom_write_pending = 1; // Deferred write
+        eeprom_write_modbus_req_count_pending = 1;
     }
 }
 
@@ -929,15 +928,15 @@ void WriteLog(LogType_t type, uint8_t subtype, uint8_t code)
 {
     uint32_t tick = HAL_GetTick();
     uint8_t full_code = type << 6 | subtype << 4 | code;
-    uint8_t log[5] = {tick & 0x000000FF, tick & 0x0000FF00, tick & 0x00FF0000, tick & 0xFF000000, full_code};
-    EEPROM_Write(&eeprom, 129 + 5 * log_i, log, 5, 100);
-    if (log_i == 24)
+    uint8_t log[5] = {tick & 0x000000FF, (tick >> 8) & 0xFF, (tick >> 16) & 0xFF, (tick >> 24) & 0xFF, full_code};
+    EEPROM_Write(&eeprom, EEPROM_ADDR_LOG_DATA + 5 * log_i, log, 5, 100);
+    if (log_i == 22) // 23 записи (0-22), т.к. 119 байт / 5 = 23
         log_i = 0;
     else
         log_i++;
     if (log_count != 255) {
         log_count++;
-        EEPROM_Write(&eeprom, 128, &log_count, 1, 100);
+        EEPROM_Write(&eeprom, EEPROM_ADDR_LOG_COUNT, &log_count, 1, 100);
     }
 }
 

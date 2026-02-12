@@ -31,7 +31,6 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -286,7 +285,8 @@ void EXTI15_10_IRQHandler(void)
     /* USER CODE BEGIN EXTI15_10_IRQn 0 */
     if (EXTI->PR & EXTI_PR_PR13) {
         EXTI->PR = EXTI_PR_PR13; // Сброс флага
-        Calibration();
+        if (CHECK_CALIB_IN_PR())
+            Calibration();
     }
     /* USER CODE END EXTI15_10_IRQn 0 */
     // HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_13);
