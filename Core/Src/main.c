@@ -178,7 +178,6 @@ int main(void)
     Coils_ApplyToPins();
     last_tick = HAL_GetTick();
     last_tick_second = HAL_GetTick();
-    // ДОБАВИЛИСЬ НОВЫЕ КОЭФ. ИСПРАВИТЬ!
     // Структура хранения. [] - это 1 байт. Наименее значимый байт хранится по меньшему адресу.
     // [кол-во коэф.] (сначала c_a) [Младший байт коэф. 1][Старший байт коэф. 1][Младший байт коэф. 2][Старший
     // байт коэф. 2]...
@@ -484,56 +483,56 @@ void DAC_StartChangingV(void)
 
 uint16_t ADC_ReadChannel(uint8_t channel)
 {
-    static struct {
-        uint16_t buffer[10];
-        uint8_t index;
-        uint8_t count;
-    } ch_filters[2] = {0};
+    /* EMA фильтр (alpha=1/2, Q16): окно оседания ~0.4 с при 5 Гц */
+    static uint32_t ema[2] = {0}; /* Q16: индекс 0 = ch0, 1 = ch5 */
+    static uint8_t ema_init[2] = {0};
 
     uint32_t sum = 0;
+    uint8_t valid_count = 0;
     ADC1->SQR3 = channel;
-    uint32_t tick = HAL_GetTick();
 
-    ADC1->CR2 |= ADC_CR2_SWSTART;
-    while (!(ADC1->SR & ADC_SR_EOC))
-        if (tick - HAL_GetTick() >= 5)
-            break;
-    (void)ADC1->DR;
-    ADC1->SR = 0;
-    tick = HAL_GetTick();
-    for (uint8_t i = 0; i < 60; i++) {
+    {
+        uint32_t iter_tick = HAL_GetTick();
         ADC1->CR2 |= ADC_CR2_SWSTART;
         while (!(ADC1->SR & ADC_SR_EOC))
-            if (tick - HAL_GetTick() >= 5)
+            if (HAL_GetTick() - iter_tick >= 5)
                 break;
-
-        sum += ADC1->DR;
+        (void)ADC1->DR;
         ADC1->SR = 0;
     }
 
-    uint16_t raw_avg = sum / 60;
+    for (uint8_t i = 0; i < 60; i++) {
+        uint32_t iter_tick = HAL_GetTick();
+        ADC1->CR2 |= ADC_CR2_SWSTART;
+        uint8_t timeout = 0;
+        while (!(ADC1->SR & ADC_SR_EOC)) {
+            if (HAL_GetTick() - iter_tick >= 5) {
+                timeout = 1;
+                break;
+            }
+        }
+        if (!timeout) {
+            sum += ADC1->DR;
+            valid_count++;
+        } else {
+            (void)ADC1->DR;
+        }
+        ADC1->SR = 0;
+    }
+
+    uint16_t raw_avg = (valid_count > 0) ? (uint16_t)(sum / valid_count) : 0;
     uint16_t mv_value = ((uint32_t)raw_avg * vdda) >> 12;
 
-    if (channel == 0 || channel == 5) { // пока для U_cur_mes и U_mes
-        uint8_t filter_idx = channel == 0 ? 0 : 1;
-
-        ch_filters[filter_idx].buffer[ch_filters[filter_idx].index] = mv_value;
-        ch_filters[filter_idx].index++;
-
-        if (ch_filters[filter_idx].index >= 10) {
-            ch_filters[filter_idx].index = 0;
+    if (channel == 0 || channel == 5) { /* U_cur_mes и U_mes */
+        uint8_t fi = (channel == 0) ? 0 : 1;
+        if (!ema_init[fi]) {
+            ema[fi] = (uint32_t)mv_value << 16;
+            ema_init[fi] = 1;
+        } else {
+            /* alpha = 1/2: EMA = EMA/2 + new/2 */
+            ema[fi] = (ema[fi] >> 1) + ((uint32_t)mv_value << 15);
         }
-
-        if (ch_filters[filter_idx].count < 10) {
-            ch_filters[filter_idx].count++;
-        }
-
-        uint32_t filter_sum = 0;
-        for (uint8_t i = 0; i < ch_filters[filter_idx].count; i++) {
-            filter_sum += ch_filters[filter_idx].buffer[i];
-        }
-
-        return (uint16_t)(filter_sum / ch_filters[filter_idx].count);
+        return (uint16_t)(ema[fi] >> 16);
     }
 
     return mv_value;
@@ -707,7 +706,7 @@ void Change_I(void)
     if (!CHECK_HEATER_STATUS())
         return;
 
-    uint16_t U_mes = ADC_ReadChannel(0);
+    uint16_t U_mes = usRegInputBuf[IREG_U_CURRENT_MES];
     uint16_t coef_b = Get_c_b_by_U_mes(U_mes);
     uint16_t I_cur = (uint16_t)(((uint32_t)U_mes * coef_b) >> Q11_SHIFT);
     uint16_t coef_a = Get_c_a_by_I(I_cur);
@@ -738,9 +737,10 @@ void Change_I(void)
     }
 
     uint16_t new_voltage;
-    if (I_cur < I_set_cur_local)
-        new_voltage = usRegInputBuf[IREG_U_SET] + delta_U;
-    else
+    if (I_cur < I_set_cur_local) {
+        new_voltage = usRegInputBuf[IREG_U_SET] + delta_U > MAX_DAC_VOLTAGE ? MAX_DAC_VOLTAGE
+                                                                            : usRegInputBuf[IREG_U_SET] + delta_U;
+    } else
         new_voltage = usRegInputBuf[IREG_U_SET] - delta_U <= 0 ? 0 : usRegInputBuf[IREG_U_SET] - delta_U;
 
     DAC_SetVoltage(new_voltage);

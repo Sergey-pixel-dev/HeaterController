@@ -260,8 +260,11 @@ uint8_t writeSingleCoil(void)
 
     if (value_field == 0xFF00)
         usCoilsBuf[word_index] |= (1 << bit);
-    else
-        usCoilsBuf[word_index] &= ~(1 << bit);
+    else {
+        if (coil_num != COIL_BIT_SET_OPERATING_MODE && coil_num != COIL_BIT_SET_STANDBY_MODE &&
+            coil_num != COIL_BIT_SET_CALIB_MODE)
+            usCoilsBuf[word_index] &= ~(1 << bit);
+    }
 
     if (coil_num == COIL_BIT_ENABLE_HEATER) {
         Coils_ApplyToPins();
@@ -288,7 +291,7 @@ uint8_t writeMultiCoils(void)
     uint16_t startAddr = ((RxBuffer[2] << 8) | RxBuffer[3]);
     uint16_t numCoils = ((RxBuffer[4] << 8) | RxBuffer[5]);
 
-    if ((numCoils < 1) || (numCoils > 2000)) {
+    if (numCoils < 1 || numCoils > 2000) {
         modbusException(ILLEGAL_DATA_VALUE);
         return 1;
     }
@@ -298,50 +301,47 @@ uint8_t writeMultiCoils(void)
         return 1;
     }
 
-    int startByte = (startAddr - COILS_START) / 16;
-    uint16_t bitPosition = (startAddr - COILS_START) % 16;
-    int indxPosition = 0;
-    int indx = 7;
+    uint16_t coil_base = startAddr - COILS_START;
+    uint16_t word_index = coil_base >> 4;
+    uint16_t bit_pos = coil_base & 0x0F;
+    uint8_t byte_index = 7; /* первый байт данных в RxBuffer */
+    uint8_t bit_in_byte = 0;
 
     uint8_t need_apply_pins = 0;
     uint8_t need_operating = 0;
     uint8_t need_standby = 0;
     uint8_t need_calib = 0;
 
-    for (int i = 0; i < numCoils; i++) {
-        if (((RxBuffer[indx] >> indxPosition) & 0x01) == 1) {
-            usCoilsBuf[startByte] |= 1 << bitPosition;
-        } else {
-            usCoilsBuf[startByte] &= ~(1 << bitPosition);
+    for (uint16_t i = 0; i < numCoils; i++) {
+        uint16_t coil_num = coil_base + i;
+        uint8_t new_val = (RxBuffer[byte_index] >> bit_in_byte) & 0x01;
+
+        int is_mode_coil = (coil_num == COIL_BIT_SET_OPERATING_MODE || coil_num == COIL_BIT_SET_STANDBY_MODE ||
+                            coil_num == COIL_BIT_SET_CALIB_MODE);
+
+        if (new_val) {
+            usCoilsBuf[word_index] |= (1u << bit_pos);
+        } else if (!is_mode_coil) {
+            usCoilsBuf[word_index] &= ~(1u << bit_pos);
         }
 
-        uint16_t coil_num = (startAddr - COILS_START) + i;
         if (coil_num == COIL_BIT_ENABLE_HEATER) {
             need_apply_pins = 1;
-        } else if (coil_num == COIL_BIT_SET_OPERATING_MODE) {
-            uint8_t new_value = ((usCoilsBuf[startByte] >> bitPosition) & 0x01);
-            if (new_value == 1)
-                need_operating = 1;
-        } else if (coil_num == COIL_BIT_SET_STANDBY_MODE) {
-            uint8_t new_value = ((usCoilsBuf[startByte] >> bitPosition) & 0x01);
-            if (new_value == 1)
-                need_standby = 1;
-        } else if (coil_num == COIL_BIT_SET_CALIB_MODE) {
-            uint8_t new_value = ((usCoilsBuf[startByte] >> bitPosition) & 0x01);
-            if (new_value == 1)
-                need_calib = 1;
+        } else if (coil_num == COIL_BIT_SET_OPERATING_MODE && new_val) {
+            need_operating = 1;
+        } else if (coil_num == COIL_BIT_SET_STANDBY_MODE && new_val) {
+            need_standby = 1;
+        } else if (coil_num == COIL_BIT_SET_CALIB_MODE && new_val) {
+            need_calib = 1;
         }
 
-        bitPosition++;
-        indxPosition++;
-
-        if (indxPosition > 7) {
-            indxPosition = 0;
-            indx++;
+        if (++bit_in_byte > 7) {
+            bit_in_byte = 0;
+            byte_index++;
         }
-        if (bitPosition > 15) {
-            bitPosition = 0;
-            startByte++;
+        if (++bit_pos > 15) {
+            bit_pos = 0;
+            word_index++;
         }
     }
 
