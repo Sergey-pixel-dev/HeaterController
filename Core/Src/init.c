@@ -40,9 +40,15 @@ void ADC_Init(void)
     ADC->CCR |= 1 << 16; // prescaler = 4
     ADC->CCR |= ADC_CCR_TSVREFE;
 
-    ADC1->SMPR2 = (7 << 0) | (7 << 3) | (7 << 6) | (7 << 9) | (7 << 12) | (7 << 15) | (7 << 24); // каналы 0-5, 8
+    ADC1->SMPR2 = (7 << 0)     // CH0 PA0
+                  | (7 << 3)   // CH1 PA1
+                  | (7 << 6)   // CH2 PA2
+                  | (7 << 21)  // CH7 PA7
+                  | (7 << 24)  // CH8 PB0
+                  | (7 << 27); // CH9 PB1
 
-    ADC1->SMPR1 = (7 << 21);
+    ADC1->SMPR1 = (7 << 0)     // CH10 PC0
+                  | (7 << 21); // CH17 VREFINT
     ADC1->CR2 |= ADC_CR2_EOCS;
 }
 
@@ -110,11 +116,14 @@ void GPIO_Init(void)
     RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN | RCC_AHB1ENR_GPIOCEN | RCC_AHB1ENR_GPIODEN | RCC_AHB1ENR_GPIOBEN;
     RCC->APB2ENR |= RCC_APB2ENR_SYSCFGEN;
 
-    // PA0-PA3, PA5: ADC inputs; PA4: DAC output (analog mode) (pa4 сломался)
-    GPIOA->MODER |= GPIO_MODER_MODER0 | GPIO_MODER_MODER2 | GPIO_MODER_MODER3 | GPIO_MODER_MODER4 | GPIO_MODER_MODER5;
+    // PA0: ADC1_IN0, PA1: ADC1_IN1, PA2: ADC1_IN2, PA4: DAC out, PA7: ADC1_IN7 (analog mode)
+    GPIOA->MODER |= GPIO_MODER_MODER0 | GPIO_MODER_MODER1 | GPIO_MODER_MODER2 | GPIO_MODER_MODER4 | GPIO_MODER_MODER7;
 
-    // PB0: ADC1_IN8 (analog mode)
-    GPIOB->MODER |= GPIO_MODER_MODER0;
+    // PB0: ADC1_IN8, PB1: ADC1_IN9 (analog mode)
+    GPIOB->MODER |= GPIO_MODER_MODER0 | GPIO_MODER_MODER1;
+
+    // PC0: ADC1_IN10 (контроль накала, analog mode)
+    GPIOC->MODER |= GPIO_MODER_MODER0;
 
     // UART5: PC12 (TX), PD2 (RX)
     GPIOC->MODER &= ~GPIO_MODER_MODER12;
@@ -151,20 +160,15 @@ void GPIO_Init(void)
     NVIC_SetPriority(EXTI15_10_IRQn, 3);
     NVIC_EnableIRQ(EXTI15_10_IRQn);
 
-    // PB14: SOURCE
-    GPIOB->MODER &= ~(GPIO_MODER_MODER14);
-    GPIOB->MODER |= GPIO_MODER_MODER14_0;
-    GPIOB->OTYPER &= ~(1 << 14);
-    GPIOB->OSPEEDR |= GPIO_OSPEEDER_OSPEEDR14;
-    GPIOB->BSRR = 1 << (14 + 16);
+    // PB15: HEATER_OUT (output push-pull, начальный уровень LOW)
+    GPIOB->MODER &= ~(GPIO_MODER_MODER15);
+    GPIOB->MODER |= GPIO_MODER_MODER15_0;
+    GPIOB->OTYPER &= ~(1 << HEATER_OUT_PIN);
+    GPIOB->OSPEEDR |= GPIO_OSPEEDER_OSPEEDR15;
+    GPIOB->BSRR = 1 << (HEATER_OUT_PIN + 16);
 
-    // PB4: JUMPER (input, pull-up)
-    GPIOB->MODER &= ~GPIO_MODER_MODER4;
-    GPIOB->PUPDR &= ~GPIO_PUPDR_PUPDR4;
-    GPIOB->PUPDR |= GPIO_PUPDR_PUPDR4_0;
-
-    // PB1, PB2: SOURCE_STATUS (input, pull-down)
-    GPIOB->MODER &= ~(GPIO_MODER_MODER1);
-    GPIOB->PUPDR &= ~(GPIO_PUPDR_PUPDR1);
-    GPIOB->PUPDR |= GPIO_PUPDR_PUPDR1_1;
+    // PB2: JUMPER (input, pull-up)
+    GPIOB->MODER &= ~GPIO_MODER_MODER2;
+    GPIOB->PUPDR &= ~GPIO_PUPDR_PUPDR2;
+    GPIOB->PUPDR |= GPIO_PUPDR_PUPDR2_0;
 }

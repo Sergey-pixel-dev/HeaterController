@@ -290,9 +290,8 @@ int main(void)
         if (current_tick - last_tick >= LOOP_UPDATE_PERIOD_MS) {
             last_tick = current_tick;
 
-            Update_Input_States();
-
-            uint8_t jumper_state = (GPIOB->IDR & (1 << JUMPER_PIN)) ? 1 : 0;
+            MeasureVref();
+            uint8_t jumper_state = (JUMPER_GPIO->IDR & (1 << JUMPER_PIN)) ? 1 : 0;
             if (jumper_state != CHECK_JMPR_STATUS()) {
                 if (jumper_state)
                     SET_JMPR_STATUS();
@@ -300,14 +299,14 @@ int main(void)
                     CLR_JMPR_STATUS();
             }
 
-            uint16_t u_current_mes = ADC_ReadChannel(0);
+            uint16_t u_current_mes = ADC_ReadChannel(ADC_CH_CURRENT_MES);
             uint16_t I_cur = Calculate_I_from_U(u_current_mes);
 
             usRegInputBuf[IREG_I_CURRENT] = I_cur;
             usRegInputBuf[IREG_U_CURRENT_MES] = u_current_mes;
 
             // U_выхода = u_adc * K_u - I * K_i
-            uint16_t u_adc_raw = ADC_ReadChannel(5);
+            uint16_t u_adc_raw = ADC_ReadChannel(ADC_CH_VOLTAGE_MES);
             uint16_t K_u = Get_c_d_by_U(u_adc_raw);
             uint16_t K_i = Get_c_e_by_I(I_cur);
 
@@ -316,9 +315,19 @@ int main(void)
 
             usRegInputBuf[IREG_U_MES] = (term1 >= term2) ? (uint16_t)(term1 - term2) : 0;
 
-            uint16_t u_27v = ADC_ReadChannel(2);
-            uint16_t u_12v = ADC_ReadChannel(3);
-            uint16_t u_m5v = ADC_ReadChannel(8);
+            uint16_t heater_adc = ADC_ReadChannel(ADC_CH_HEATER_CHECK);
+            usRegInputBuf[IREG_HEATER_ADC] = heater_adc;
+
+            uint16_t heater_ref = usRegHoldingBuf[HREG_HEATER_LEVEL];
+            uint16_t heater_low = (heater_ref >= 100) ? (heater_ref - 100) : 0;
+            if (heater_adc >= heater_low && heater_adc <= 3300)
+                SET_HEATER_STATUS();
+            else
+                CLR_HEATER_STATUS();
+
+            uint16_t u_27v = ADC_ReadChannel(ADC_CH_27V);
+            uint16_t u_12v = ADC_ReadChannel(ADC_CH_12V);
+            uint16_t u_m5v = ADC_ReadChannel(ADC_CH_M5V);
 
             usRegInputBuf[IREG_27V] = u_27v;
             usRegInputBuf[IREG_12V] = u_12v;
@@ -522,18 +531,19 @@ uint16_t ADC_ReadChannel(uint8_t channel)
 
     uint16_t raw_avg = (valid_count > 0) ? (uint16_t)(sum / valid_count) : 0;
     uint16_t mv_value = ((uint32_t)raw_avg * vdda) >> 12;
-
-    if (channel == 0 || channel == 5) { /* U_cur_mes и U_mes */
-        uint8_t fi = (channel == 0) ? 0 : 1;
-        if (!ema_init[fi]) {
-            ema[fi] = (uint32_t)mv_value << 16;
-            ema_init[fi] = 1;
-        } else {
-            /* alpha = 1/2: EMA = EMA/2 + new/2 */
-            ema[fi] = (ema[fi] >> 1) + ((uint32_t)mv_value << 15);
-        }
-        return (uint16_t)(ema[fi] >> 16);
+    /*
+        if (channel == 0 || channel == 5) {  U_cur_mes и U_mes
+    uint8_t fi = (channel == 0) ? 0 : 1;
+    if (!ema_init[fi]) {
+        ema[fi] = (uint32_t)mv_value << 16;
+        ema_init[fi] = 1;
+    } else {
+         alpha = 1/2: EMA = EMA/2 + new/2
+        ema[fi] = (ema[fi] >> 1) + ((uint32_t)mv_value << 15);
     }
+    return (uint16_t)(ema[fi] >> 16);
+}
+*/
 
     return mv_value;
 }
@@ -614,19 +624,19 @@ void Calibration(void)
     static uint16_t u_mes;
     if (CHECK_CALIB_IN_PR() && (c_index <= N_SEGMENTS)) {
         if (!NormalOrKZ) {
-            u_cur_mes = ADC_ReadChannel(0);
-            u_mes = ADC_ReadChannel(5);
+            u_cur_mes = ADC_ReadChannel(ADC_CH_CURRENT_MES);
+            u_mes = ADC_ReadChannel(ADC_CH_VOLTAGE_MES);
             uint16_t calib_value = usRegHoldingBuf[HREG_CALIB_VALUE] == 0 ? 1 : usRegHoldingBuf[HREG_CALIB_VALUE];
             u_cur_mes = u_cur_mes == 0 ? 1 : u_cur_mes;
             c_a[c_index] = (uint16_t)(((uint32_t)usRegInputBuf[IREG_OSCILLOSCOPE_I] << Q11_SHIFT) /
-                                      (((uint32_t)vdda * calib_value) >> 11));
+                                      (((uint32_t)vdda * calib_value) >> 12));
             c_b[c_index] = (uint16_t)(((uint32_t)usRegInputBuf[IREG_OSCILLOSCOPE_I] << Q11_SHIFT) / u_cur_mes);
 
             SET_NormalOrKZ();
             NormalOrKZ = 1;
 
         } else {
-            u_mes_kz = ADC_ReadChannel(5);
+            u_mes_kz = ADC_ReadChannel(ADC_CH_VOLTAGE_MES);
 
             uint16_t I_osc = usRegInputBuf[IREG_OSCILLOSCOPE_I];
             uint16_t I_kz = usRegHoldingBuf[HREG_CALIB_I_KZ];
@@ -677,7 +687,7 @@ void Calibration(void)
         CLR_CALIB_MODE();
         CLR_CALIB_MODE_IN_PR();
         SET_STANDBY_MODE();
-        usRegInputBuf[IREG_OSCILLOSCOPE_I] = 0;
+        usRegInputBuf[IREG_OSCILLOSCOPE_I] = CALIB_INITIAL_I;
         usRegHoldingBuf[HREG_CALIB_VALUE] = 0;
         usRegInputBuf[IREG_CALIB_STEP] = 0;
         usRegInputBuf[IREG_CALIB_CA] = 0;
@@ -706,9 +716,8 @@ void Change_I(void)
     if (!CHECK_HEATER_STATUS())
         return;
 
-    uint16_t U_mes = usRegInputBuf[IREG_U_CURRENT_MES];
-    uint16_t coef_b = Get_c_b_by_U_mes(U_mes);
-    uint16_t I_cur = (uint16_t)(((uint32_t)U_mes * coef_b) >> Q11_SHIFT);
+    uint16_t U_mes = ADC_ReadChannel(ADC_CH_CURRENT_MES);
+    uint16_t I_cur = Calculate_I_from_U(U_mes);
     uint16_t coef_a = Get_c_a_by_I(I_cur);
 
     uint16_t I_set_cur_local;
@@ -748,8 +757,8 @@ void Change_I(void)
 }
 uint16_t Get_c_a_by_I(uint16_t i)
 {
-    if (CHECK_CALIB_IN_PR())
-        return COEF_A_DEFAULT << Q11_SHIFT;
+    // if (CHECK_CALIB_IN_PR())
+    //     return COEF_A_DEFAULT << Q11_SHIFT;
 
     const uint16_t default_val = (uint16_t)(COEF_A_DEFAULT << Q11_SHIFT);
 
@@ -767,19 +776,12 @@ uint16_t Get_c_a_by_I(uint16_t i)
 
 uint16_t Get_c_b_by_U_mes(uint16_t u)
 {
-    if (CHECK_CALIB_IN_PR())
-        return COEF_B_DEFAULT << Q11_SHIFT;
-
     const uint16_t default_val = (uint16_t)(COEF_B_DEFAULT << Q11_SHIFT);
 
     if (u <= MIN_U)
         return (c_b[0] != 0) ? c_b[0] : default_val;
     if (u >= MAX_U)
         return (c_b[N_SEGMENTS - 1] != 0) ? c_b[N_SEGMENTS - 1] : default_val;
-
-    uint32_t denom = (uint32_t)MAX_U - (uint32_t)MIN_U + 1U;
-    if (denom == 0)
-        return default_val;
 
     uint32_t idx = ((uint32_t)(u - MIN_U) * (uint32_t)N_SEGMENTS) / (MAX_U - MIN_U + 1);
     if (idx >= (uint32_t)N_SEGMENTS)
@@ -790,6 +792,11 @@ uint16_t Get_c_b_by_U_mes(uint16_t u)
 
 uint16_t Calculate_I_from_U(uint16_t u_mes)
 {
+    // // Проход 1: грубая оценка тока через c_b[0] для определения сегмента
+    // uint16_t cb0 = (c_b[0] != 0) ? c_b[0] : (uint16_t)(COEF_B_DEFAULT << Q11_SHIFT);
+    // uint16_t i_rough = (uint16_t)(((uint32_t)u_mes * cb0 + Q11_HALF) >> Q11_SHIFT);
+    // // Проход 2: точный c_b из правильного сегмента по грубому току
+    // uint16_t coef_b = Get_c_b_by_I(i_rough);
     uint16_t coef_b = Get_c_b_by_U_mes(u_mes);
     return (uint16_t)(((uint32_t)u_mes * coef_b) >> Q11_SHIFT);
 }
@@ -829,16 +836,7 @@ uint16_t Get_c_e_by_I(uint16_t i)
     return c_e[idx];
 }
 
-void Update_Input_States(void)
-{
-    uint8_t source_state = (GPIOB->IDR & (1 << SOURCE_STATUS_PIN)) ? 1 : 0;
-    if (source_state != CHECK_HEATER_STATUS()) {
-        if (source_state)
-            SET_HEATER_STATUS();
-        else
-            CLR_HEATER_STATUS();
-    }
-}
+void Update_Input_States(void) {}
 
 void SetOperatingMode(void)
 {
@@ -883,9 +881,9 @@ void SetCalibrationMode(void)
 void Coils_ApplyToPins(void)
 {
     if (!CHECK_ENABLE_HEATER())
-        GPIOB->BSRR = (1 << SOURCE_PIN);
+        HEATER_OUT_GPIO->BSRR = (1 << HEATER_OUT_PIN);
     else
-        GPIOB->BSRR = (1 << (SOURCE_PIN + 16));
+        HEATER_OUT_GPIO->BSRR = (1 << (HEATER_OUT_PIN + 16));
 }
 void HandleModbusRequest(uint8_t *RxBuf)
 {

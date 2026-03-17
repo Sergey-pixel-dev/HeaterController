@@ -57,18 +57,36 @@ extern "C" {
 #define MAX_U 3300
 #define MAX_DAC_VOLTAGE 3300 // VDDA в мВ
 
-#define N_TIMERS 1 // Кол-во интервалов в 1 сек
+#define N_TIMERS 7 // Кол-во интервалов в 1 сек
 
 // ============================================================================
-// GPIO пины для управления (порт B)
+// GPIO пины для управления
 // ============================================================================
-#define SOURCE_PIN 14    // PB14 - Включение источника (выход)
-#define CONVERTER_PIN 15 // PB15 - Включение преобразователя (выход)
-#define JUMPER_PIN 4     // PB4 - Статус джампера (вход)
-#define BUTTON_PIN 13    // PB13 - Кнопка калибровки (уже настроена)
+// Выходные пины
+#define HEATER_OUT_GPIO GPIOB
+#define HEATER_OUT_PIN 15 // PB15 - включение накала
 
-#define SOURCE_STATUS_PIN 1    // PB1 - Фактическое состояние источника (вход)
-#define CONVERTER_STATUS_PIN 2 // PB2 - Фактическое состояние преобразователя (вход)
+// Входные дискретные пины
+#define JUMPER_GPIO GPIOB
+#define JUMPER_PIN 2 // PB2 - перемычка
+
+#define BUTTON_GPIO GPIOB
+#define BUTTON_PIN 13 // PB13 - кнопка
+
+// ЦАП
+#define DAC_OUT_GPIO GPIOA
+#define DAC_OUT_PIN 4 // PA4 - управляющее напряжение
+
+// ============================================================================
+// ADC каналы
+// ============================================================================
+#define ADC_CH_HEATER_CHECK 10 // PC0  - проверить включение накала
+#define ADC_CH_CURRENT_MES 0   // PA0  - измерение напряжения тока
+#define ADC_CH_VOLTAGE_MES 1   // PA1  - измерение напряжения
+#define ADC_CH_CONTROL_U 2     // PA2  - измерение управляющего напряжения
+#define ADC_CH_27V 7           // PA7  - контроль +27В
+#define ADC_CH_M5V 8           // PB0  - -5В
+#define ADC_CH_12V 9           // PB1  - +12В
 
 // ============================================================================
 // Q5.11 Fixed Point
@@ -155,11 +173,12 @@ extern "C" {
 #define HREG_CURRENT_SPEED 2
 #define HREG_ACCURACY 3
 #define HREG_CALIB_VALUE 4
-#define HREG_CALIB_U 5    // Значение напряжения на выходе
-#define HREG_CALIB_I_KZ 6 // Значение тока при кз.
-#define HREG_27V 7
-#define HREG_12V 8
-#define HREG_M5V 9
+#define HREG_CALIB_U 5      // Значение напряжения на выходе
+#define HREG_CALIB_I_KZ 6   // Значение тока при кз.
+#define HREG_HEATER_LEVEL 7 // Нижний порог для определения включения накала
+#define HREG_27V 8
+#define HREG_12V 9
+#define HREG_M5V 10
 
 // ============================================================================
 // Input Registers
@@ -168,6 +187,7 @@ extern "C" {
 #define IREG_U_SET 1
 #define IREG_U_CURRENT_MES 2
 #define IREG_U_MES 3
+#define IREG_HEATER_ADC 4 // ADC канала PC0 (контроль накала)
 #define IREG_27V 5
 #define IREG_12V 6
 #define IREG_M5V 7
